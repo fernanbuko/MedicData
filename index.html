@@ -1224,8 +1224,6 @@ function NotificationBell() {
 }
 
 function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdminApp, children }) {
-  const [menuAbierto, setMenuAbierto] = React.useState(false);
-  usarNavegacionAtras(menuAbierto, () => setMenuAbierto(false));
   const tabs = TODAS_LAS_SECCIONES.filter((t) => seccionesVisibles.includes(t.key));
   const iconos = { inicio: "🏠", agenda: "🗓", pacientes: "🧑‍⚕️", recetas: "📋", examenes: "🧪", config: "⚙" };
 
@@ -1307,26 +1305,8 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
               <div className="w-7 h-7 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
             )}
           </button>
-          <button onClick={() => setMenuAbierto((v) => !v)} className="text-2xl leading-none px-1">☰</button>
         </div>
       </header>
-      {menuAbierto && (
-        <div className="md:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setMenuAbierto(false)}>
-          <div className="bg-card dark:bg-[#0F1B2C] w-64 h-full p-4 flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => { setView(t.key); setMenuAbierto(false); }}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-left ${
-                  view === t.key ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "text-muted"
-                }`}
-              >
-                <span>{iconos[t.key]}</span>{t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       <main className="flex-1 min-w-0 pb-20 md:pb-8">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
