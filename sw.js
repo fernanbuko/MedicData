@@ -2,7 +2,7 @@
 // (ASSETS_EXTERNOS) o la estrategia de caché — así los celulares que ya
 // tenían la app instalada descartan cualquier copia vieja o dañada en
 // lugar de seguir usándola para siempre.
-const CACHE_NAME = "medidata-v2";
+const CACHE_NAME = "medidata-v3";
 
 // Los scripts de Firebase y las librerías de React/Babel/Tailwind se cargan
 // desde CDNs externos, no desde este mismo sitio — por eso hay que guardarlos
@@ -13,8 +13,9 @@ const ASSETS_EXTERNOS = [
   "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js",
   "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js",
   "https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js",
-  "https://unpkg.com/react@18/umd/react.production.min.js",
-  "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",
+  "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+  "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+  "https://unpkg.com/@babel/standalone@7/babel.min.js",
   "https://cdn.tailwindcss.com",
 ];
 

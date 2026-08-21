@@ -62,10 +62,17 @@
 </script>
 
 <!-- React + ReactDOM (UMD, sin paso de build) -->
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<!-- Babel Standalone: permite escribir JSX directo en el navegador -->
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<!-- Babel Standalone: permite escribir JSX directo en el navegador.
+     IMPORTANTE: fijo a la rama 7.x a propósito. La versión 8 (sin fijar
+     versión, "@babel/standalone" resuelve a la más nueva) cambió el
+     transform de JSX por defecto para que agregue un "import" de
+     react/jsx-runtime en el código generado — algo que un <script> normal
+     no puede ejecutar, y rompe la app con
+     "Cannot use import statement outside a module". La 7.x sigue usando
+     React.createElement, que es como está escrito todo este archivo. -->
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
 <!-- Firebase (Auth + Firestore + Cloud Messaging) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -118,7 +125,11 @@
         if (origen) {
           mostrarError("No se pudo descargar: " + origen);
         } else {
-          mostrarError((e && e.message) || "Error desconocido");
+          var detalle = (e && e.message) || "Error desconocido";
+          if (e && e.filename) {
+            detalle += "<br>Archivo: " + e.filename + (e.lineno ? " (línea " + e.lineno + ")" : "");
+          }
+          mostrarError(detalle);
         }
       },
       true // fase de captura: necesario para detectar scripts/estilos que no cargan
