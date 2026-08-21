@@ -97,6 +97,48 @@
 <div id="root">
   <div id="boot-msg">Cargando MediData…</div>
 </div>
+
+<!-- Si algo falla al cargar (script bloqueado, error de sintaxis, etc.),
+     esto lo muestra en pantalla en vez de dejar "Cargando…" pegado para
+     siempre sin explicación. -->
+<script>
+  (function () {
+    function mostrarError(msg) {
+      var el = document.getElementById("boot-msg");
+      if (!el) return;
+      el.innerHTML =
+        '<strong>No se pudo cargar MediData.</strong><br><br>' +
+        '<span style="font-family:monospace;font-size:13px;color:#B14E1C">' + msg + '</span><br><br>' +
+        '<button onclick="location.reload()" style="padding:8px 16px;border-radius:8px;background:#1F3A5F;color:#fff;border:none;font-size:14px">Reintentar</button>';
+    }
+    window.addEventListener(
+      "error",
+      function (e) {
+        var origen = e && e.target && (e.target.src || e.target.href);
+        if (origen) {
+          mostrarError("No se pudo descargar: " + origen);
+        } else {
+          mostrarError((e && e.message) || "Error desconocido");
+        }
+      },
+      true // fase de captura: necesario para detectar scripts/estilos que no cargan
+    );
+    window.addEventListener("unhandledrejection", function (e) {
+      var reason = e && e.reason;
+      mostrarError((reason && (reason.message || reason)) || "Promesa rechazada sin mensaje");
+    });
+    setTimeout(function () {
+      var root = document.getElementById("root");
+      if (root && root.children.length === 1 && document.getElementById("boot-msg")) {
+        mostrarError(
+          "La app tardó demasiado en cargar. Puede ser tu conexión (intenta con WiFi), " +
+          "o que algún recurso externo (React, Firebase, Tailwind) no haya podido descargarse."
+        );
+      }
+    }, 12000);
+  })();
+</script>
+
 <script type="text/babel" data-presets="react">
 // ==========================================================================
 // MediData — historia clínica, recetas, exámenes y agenda para consultorios
