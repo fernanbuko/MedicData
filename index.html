@@ -2525,8 +2525,9 @@ function InicioView({ config, setView, onAbrirPaciente }) {
 
   return (
     <div>
-      <h1 className="text-2xl font-display font-semibold mb-1">
-        {saludo}{config.nombreMedico ? `, ${config.nombreMedico}` : ""}
+      <h1 className="text-2xl font-display font-semibold mb-1 leading-snug">
+        {saludo}
+        {config.nombreMedico && <><br />{config.nombreMedico}</>}
       </h1>
       <p className="text-muted text-sm mb-6">
         {new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })}
