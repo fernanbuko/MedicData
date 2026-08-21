@@ -1452,28 +1452,191 @@ function imprimirFichaPaciente(paciente, consultas, recetas, examenes, config) {
   win.print();
 }
 
+// -----------------------------------------------------------------------
+// Galería de fotos del paciente: varias fotos con fecha (a diferencia de
+// la foto de perfil, que es solo una), útil para documentar evolución,
+// heridas, resultados visuales, etc. Con visor a pantalla completa.
+// -----------------------------------------------------------------------
+function FotoForm({ paciente, onClose, onSaved }) {
+  const [fecha, setFecha] = React.useState(hoyISO());
+  const [nota, setNota] = React.useState("");
+  const [url, setUrl] = React.useState("");
+  const [subiendo, setSubiendo] = React.useState(false);
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  async function subirFoto(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendo(true);
+    setError("");
+    try {
+      const subida = await subirACloudinary(file, `${carpetaPaciente(paciente.id, paciente.nombre)}/fotos`);
+      setUrl(subida);
+    } catch (err) {
+      setError(err.message);
+    }
+    setSubiendo(false);
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!url) {
+      setError("Primero sube una foto.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      await crearDoc("fotos", { patientId: paciente.id, patientName: paciente.nombre, fecha, nota, url });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <Modal title={`Nueva foto — ${paciente.nombre}`} onClose={onClose}>
+      <form onSubmit={guardar}>
+        <Field label="Foto">
+          {url ? (
+            <div className="relative w-32 h-32">
+              <img src={url} className="w-full h-full object-cover rounded-lg" />
+              <button type="button" onClick={() => setUrl("")} className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-warn text-white text-xs">✕</button>
+            </div>
+          ) : (
+            <label className="flex items-center justify-center w-32 h-32 rounded-lg border border-dashed border-faint dark:border-white/20 text-sm text-accent2 cursor-pointer">
+              {subiendo ? "Subiendo…" : "+ Elegir foto"}
+              <input type="file" accept="image/*" className="hidden" onChange={subirFoto} disabled={subiendo || !cloudinaryReady} />
+            </label>
+          )}
+          {!cloudinaryReady && <span className="text-xs text-faint block mt-1">(configura Cloudinary para poder subir fotos)</span>}
+        </Field>
+        <Field label="Fecha"><TextInput type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+        <Field label="Nota (opcional)"><TextInput value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Ej. Antes del tratamiento" /></Field>
+
+        {error && <p className="text-warn text-sm mb-3">{error}</p>}
+        <div className="flex gap-2 justify-end mt-2">
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <PrimaryButton type="submit" disabled={guardando || !url}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function GaleriaLightbox({ fotos, indiceInicial, onClose, onEliminar }) {
+  const [indice, setIndice] = React.useState(indiceInicial);
+  const foto = fotos[indice];
+
+  React.useEffect(() => {
+    function onTecla(e) {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowRight") setIndice((i) => Math.min(i + 1, fotos.length - 1));
+      if (e.key === "ArrowLeft") setIndice((i) => Math.max(i - 1, 0));
+    }
+    document.addEventListener("keydown", onTecla);
+    return () => document.removeEventListener("keydown", onTecla);
+  }, [fotos.length, onClose]);
+
+  if (!foto) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" onClick={onClose}>
+      <div className="flex items-center justify-between px-4 py-3 text-white text-sm shrink-0" onClick={(e) => e.stopPropagation()}>
+        <span>{formatFecha(foto.fecha)} {foto.nota ? `· ${foto.nota}` : ""}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-white/60">{indice + 1} / {fotos.length}</span>
+          <button onClick={() => onEliminar(foto)} className="text-white/80 hover:text-warn">Eliminar</button>
+          <button onClick={onClose} className="text-white/80 hover:text-white text-xl leading-none">×</button>
+        </div>
+      </div>
+      <div className="flex-1 flex items-center justify-center relative min-h-0" onClick={(e) => e.stopPropagation()}>
+        {indice > 0 && (
+          <button onClick={() => setIndice((i) => i - 1)} className="absolute left-2 text-white/70 hover:text-white text-3xl px-3 py-6">‹</button>
+        )}
+        <img src={foto.url} className="max-w-full max-h-full object-contain" />
+        {indice < fotos.length - 1 && (
+          <button onClick={() => setIndice((i) => i + 1)} className="absolute right-2 text-white/70 hover:text-white text-3xl px-3 py-6">›</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FotosDePaciente({ paciente, fotos }) {
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+  const [indiceAbierto, setIndiceAbierto] = React.useState(null);
+
+  async function eliminarFoto(foto) {
+    if (!confirm("¿Eliminar esta foto? No se puede deshacer.")) return;
+    await borrarDoc("fotos", foto.id);
+    setIndiceAbierto(null);
+  }
+
+  return (
+    <div>
+      <div className="flex justify-end mb-3"><PrimaryButton onClick={() => setMostrarForm(true)}>+ Agregar foto</PrimaryButton></div>
+      {fotos.length === 0 ? (
+        <EmptyState icon="🖼" title="Sin fotos guardadas" />
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {fotos.map((f, i) => (
+            <button key={f.id} onClick={() => setIndiceAbierto(i)} className="aspect-square rounded-lg overflow-hidden bg-line dark:bg-white/10">
+              <img src={f.url} className="w-full h-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+      {mostrarForm && <FotoForm paciente={paciente} onClose={() => setMostrarForm(false)} onSaved={() => setMostrarForm(false)} />}
+      {indiceAbierto !== null && (
+        <GaleriaLightbox fotos={fotos} indiceInicial={indiceAbierto} onClose={() => setIndiceAbierto(null)} onEliminar={eliminarFoto} />
+      )}
+    </div>
+  );
+}
+
 function PatientDetail({ patientId, onVolver, config }) {
   const { items: pacientes } = useCollection("pacientes");
   const paciente = pacientes.find((p) => p.id === patientId);
   const { items: consultasTodas } = useCollection("consultas", { orderByField: "fecha", direction: "desc" });
   const { items: recetasTodas } = useCollection("recetas", { orderByField: "fecha", direction: "desc" });
   const { items: examenesTodos } = useCollection("examenes", { orderByField: "fecha", direction: "desc" });
+  const { items: fotosTodas } = useCollection("fotos", { orderByField: "fecha", direction: "desc" });
   const [tab, setTab] = React.useState("historia");
   const [mostrarEditar, setMostrarEditar] = React.useState(false);
   const [mostrarConsulta, setMostrarConsulta] = React.useState(false);
+  const [eliminando, setEliminando] = React.useState(false);
 
   if (!paciente) return <Spinner label="Cargando paciente…" />;
 
   const consultas = consultasTodas.filter((c) => c.patientId === patientId);
   const recetas = recetasTodas.filter((r) => r.patientId === patientId);
   const examenes = examenesTodos.filter((e) => e.patientId === patientId);
+  const fotos = fotosTodas.filter((f) => f.patientId === patientId);
   const edad = calcularEdad(paciente.fechaNacimiento);
 
   const tabs = [
     ["historia", "Historia clínica"],
     ["recetas", "Recetas"],
     ["examenes", "Exámenes"],
+    ["fotos", "Fotos"],
   ];
+
+  async function eliminarPaciente() {
+    if (!confirm(`¿Eliminar a ${paciente.nombre}? Se borra su ficha; las consultas, recetas y exámenes que ya tiene guardados quedan en el sistema pero ya no se van a poder ver desde su ficha. Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    setEliminando(true);
+    try {
+      await borrarDoc("pacientes", paciente.id);
+      onVolver();
+    } catch (err) {
+      alert(err.message);
+      setEliminando(false);
+    }
+  }
 
   return (
     <div>
@@ -1494,10 +1657,13 @@ function PatientDetail({ patientId, onVolver, config }) {
               <div className="mt-2 text-xs px-2 py-1 rounded-md bg-warnbg text-warn border border-warnborder inline-block">⚠ Alergias: {paciente.alergias}</div>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-start">
             <SecondaryButton onClick={() => setMostrarEditar(true)}>Editar</SecondaryButton>
             <SecondaryButton onClick={() => imprimirFichaPaciente(paciente, consultas, recetas, examenes, config)}>Imprimir ficha</SecondaryButton>
           </div>
+        </div>
+        <div className="mt-3 pt-3 border-t border-line dark:border-white/10 flex justify-end">
+          <DangerLink onClick={eliminarPaciente}>{eliminando ? "Eliminando…" : "Eliminar paciente"}</DangerLink>
         </div>
       </Card>
 
@@ -1524,6 +1690,7 @@ function PatientDetail({ patientId, onVolver, config }) {
 
       {tab === "recetas" && <RecetasDePaciente paciente={paciente} recetas={recetas} config={config} />}
       {tab === "examenes" && <ExamenesDePaciente paciente={paciente} examenes={examenes} />}
+      {tab === "fotos" && <FotosDePaciente paciente={paciente} fotos={fotos} />}
 
       {mostrarEditar && <PatientForm paciente={paciente} onClose={() => setMostrarEditar(false)} onSaved={() => setMostrarEditar(false)} />}
       {mostrarConsulta && <ConsultaForm paciente={paciente} onClose={() => setMostrarConsulta(false)} onSaved={() => setMostrarConsulta(false)} />}
