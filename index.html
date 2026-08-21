@@ -1722,10 +1722,10 @@ function PatientDetail({ patientId, onVolver, config }) {
   const edad = calcularEdad(paciente.fechaNacimiento);
 
   const tabs = [
-    ["historia", "Historia clínica"],
-    ["recetas", "Recetas"],
-    ["examenes", "Exámenes"],
-    ["fotos", "Fotos"],
+    ["historia", "Historia", "📄"],
+    ["recetas", "Recetas", "📋"],
+    ["examenes", "Exámenes", "🧪"],
+    ["fotos", "Fotos", "🖼"],
   ];
 
   async function eliminarPaciente() {
@@ -1773,10 +1773,16 @@ function PatientDetail({ patientId, onVolver, config }) {
         </div>
       </Card>
 
-      <div className="flex gap-1 mb-4 border-b border-line dark:border-white/10">
-        {tabs.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${tab === k ? "border-ink dark:border-accent text-ink dark:text-accent" : "border-transparent text-muted"}`}>
-            {label}
+      <div className="flex mb-4 border-b border-line dark:border-white/10 overflow-x-auto">
+        {tabs.map(([k, label, icono]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap px-2 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
+              tab === k ? "border-ink dark:border-accent text-ink dark:text-accent" : "border-transparent text-muted hover:text-ink dark:hover:text-paper"
+            }`}
+          >
+            <span className="text-xs">{icono}</span>{label}
           </button>
         ))}
       </div>
