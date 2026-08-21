@@ -154,17 +154,24 @@ async function revisarConsultorio(ownerUid) {
 }
 
 async function main() {
-  console.log("🔎 Buscando consultorios con notificaciones activadas…");
-  const usersSnap = await db.collection("users").get();
-  console.log(`   ${usersSnap.size} cuenta(s) encontrada(s).`);
-  for (const userDoc of usersSnap.docs) {
+  console.log("🔎 Buscando consultorios registrados…");
+  // OJO: nunca escribimos nada directo en "users/{uid}" (solo en sus
+  // subcolecciones, como "pacientes" o "citas"), así que ese documento
+  // nunca "existe" para Firestore y db.collection("users").get() siempre
+  // devuelve vacío. La lista real de consultorios está en
+  // "cuentasRegistradas" (la misma que usa el panel de administración de
+  // la app), así que la usamos como fuente de verdad aquí también.
+  const cuentasSnap = await db.collection("cuentasRegistradas").get();
+  console.log(`   ${cuentasSnap.size} cuenta(s) encontrada(s).`);
+  for (const cuentaDoc of cuentasSnap.docs) {
+    if (cuentaDoc.data().bloqueada) {
+      console.log(`   ⏭ ${cuentaDoc.id} está bloqueada, se salta.`);
+      continue;
+    }
     try {
-      // Solo cuentas "dueñas" tienen documento de config con fcmTokens; los
-      // colaboradores no llevan citas propias, así que basta con revisar
-      // cada uid como si fuera un posible dueño.
-      await revisarConsultorio(userDoc.id);
+      await revisarConsultorio(cuentaDoc.id);
     } catch (e) {
-      console.error(`   ❌ Error revisando ${userDoc.id}:`, e.message);
+      console.error(`   ❌ Error revisando ${cuentaDoc.id}:`, e.message);
     }
   }
   console.log("✅ Revisión terminada.");

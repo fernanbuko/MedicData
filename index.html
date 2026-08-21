@@ -2858,29 +2858,48 @@ function App() {
   // Estado de bloqueo del consultorio (ver PanelAdminView): vive en la
   // cuenta DUEÑA, así que un/a colaborador/a también queda bloqueado/a
   // cuando se bloquea el consultorio al que pertenece.
-  const [cuentaEstado, setCuentaEstado] = React.useState({ cargando: true, bloqueada: false, motivoBloqueo: "" });
+  const [cuentaEstado, setCuentaEstado] = React.useState({ cargando: true, existe: false, bloqueada: false, motivoBloqueo: "" });
   React.useEffect(() => {
     if (!dataOwnerEstado.ownerUid) return;
     const unsub = db
       .collection("cuentasRegistradas")
       .doc(dataOwnerEstado.ownerUid)
       .onSnapshot(
-        (doc) => setCuentaEstado({ cargando: false, bloqueada: doc.exists ? !!doc.data().bloqueada : false, motivoBloqueo: doc.exists ? doc.data().motivoBloqueo || "" : "" }),
-        () => setCuentaEstado({ cargando: false, bloqueada: false, motivoBloqueo: "" })
+        (doc) => setCuentaEstado({ cargando: false, existe: doc.exists, bloqueada: doc.exists ? !!doc.data().bloqueada : false, motivoBloqueo: doc.exists ? doc.data().motivoBloqueo || "" : "" }),
+        () => setCuentaEstado({ cargando: false, existe: false, bloqueada: false, motivoBloqueo: "" })
       );
     return () => unsub();
   }, [dataOwnerEstado.ownerUid]);
 
   // Deja registro de "última conexión" para el panel de administración —
   // solo desde la cuenta dueña, para no necesitar que los colaboradores
-  // también tengan permiso de escritura ahí.
+  // también tengan permiso de escritura ahí. Si la cuenta es de antes de
+  // que existiera este panel (o si por lo que sea nunca quedó registrada
+  // al crearse), se registra sola aquí — así el robot de recordatorios
+  // también la encuentra.
   React.useEffect(() => {
     if (!dataOwnerEstado.ownerUid || dataOwnerEstado.esColaborador || dataOwnerEstado.necesitaOnboarding) return;
-    db.collection("cuentasRegistradas").doc(dataOwnerEstado.ownerUid).set(
-      { ultimaConexion: firebase.firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    ).catch(() => {});
-  }, [dataOwnerEstado.ownerUid, dataOwnerEstado.esColaborador, dataOwnerEstado.necesitaOnboarding]);
+    if (cuentaEstado.cargando || cargandoConfig) return;
+    if (cuentaEstado.existe) {
+      db.collection("cuentasRegistradas").doc(dataOwnerEstado.ownerUid).set(
+        { ultimaConexion: firebase.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      ).catch(() => {});
+    } else {
+      registrarCuentaNueva(dataOwnerEstado.ownerUid, {
+        nombreConsultorio: config.nombreConsultorio || "",
+        nombreMedico: config.nombreMedico || "",
+        email: (user && user.email) || "",
+      });
+    }
+  }, [
+    dataOwnerEstado.ownerUid,
+    dataOwnerEstado.esColaborador,
+    dataOwnerEstado.necesitaOnboarding,
+    cuentaEstado.cargando,
+    cuentaEstado.existe,
+    cargandoConfig,
+  ]);
 
   if (!firebaseReady) return <BootWarning />;
   if (user === undefined || dataOwnerEstado.cargando) {
