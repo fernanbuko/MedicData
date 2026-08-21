@@ -2,12 +2,15 @@ name: Revisar citas próximas y enviar notificaciones
 
 on:
   schedule:
-    # Cada 30 minutos. GitHub Actions usa hora UTC, pero esto no afecta el
-    # resultado: el script calcula "cuánto falta para la cita" comparando
-    # fechas completas, no solo la hora del reloj del robot. Como la
-    # ventana de aviso (MINUTOS_VENTANA en revisar-citas.js) también es de
-    # 30 minutos, cada cita sigue quedando cubierta por alguna corrida.
+    # Cada 30 minutos. Este disparador de GitHub es "mejor esfuerzo": en
+    # repos nuevos o con poca actividad puede atrasarse varias horas, o
+    # saltarse corridas. Se deja como respaldo, pero el disparador
+    # confiable es "repository_dispatch" de aquí abajo, activado por un
+    # cron externo (cron-job.org) que llama a la API de GitHub cada 30
+    # minutos — ver el README para configurarlo.
     - cron: "*/30 * * * *"
+  repository_dispatch:
+    types: [revisar-citas]
   workflow_dispatch: {} # permite ejecutarlo a mano desde la pestaña Actions, para probar
 
 jobs:

@@ -91,8 +91,8 @@ plano.
 ## 4. Robot de recordatorios (notificaciones push automáticas)
 
 La carpeta `notificaciones-robot/` contiene un script que revisa las citas
-próximas y manda una notificación push cuando falta poco. Se ejecuta solo,
-cada 5 minutos, con GitHub Actions — no necesitas un servidor propio.
+próximas y manda una notificación push cuando falta poco. Se ejecuta con
+GitHub Actions — no necesitas un servidor propio.
 
 1. En Firebase Console → **Configuración del proyecto → Cuentas de
    servicio → Generar nueva clave privada**. Se descarga un archivo JSON.
@@ -100,14 +100,54 @@ cada 5 minutos, con GitHub Actions — no necesitas un servidor propio.
    Actions → New repository secret**.
    - Nombre: `FIREBASE_SERVICE_ACCOUNT_JSON`
    - Valor: pega el contenido completo del archivo JSON descargado.
-3. Listo — el flujo `.github/workflows/revisar-citas.yml` ya está incluido
-   y empezará a correr solo. Puedes probarlo a mano desde la pestaña
-   **Actions** de tu repositorio → "Revisar citas próximas y enviar
-   notificaciones" → **Run workflow**.
+3. Listo — el flujo `.github/workflows/revisar-citas.yml` ya está incluido.
+   Puedes probarlo a mano desde la pestaña **Actions** de tu repositorio →
+   "Revisar citas próximas y enviar notificaciones" → **Run workflow**.
 
 Por defecto asume que el consultorio está en la zona horaria de Ecuador
 (UTC-5). Si estás en otro país, cambia `DESFASE_HORAS` al inicio de
 `notificaciones-robot/revisar-citas.js`.
+
+### Que corra puntual de verdad, con cron-job.org
+
+El disparador `schedule` de GitHub Actions es "mejor esfuerzo": en repos
+nuevos o con poca actividad puede atrasarse horas, o saltarse corridas por
+completo — no es algo que se pueda ajustar desde la configuración. La
+forma confiable es un **cron externo** que llame a la API de GitHub para
+disparar el flujo cada cierto tiempo. El workflow ya está listo para
+recibir esto (evento `repository_dispatch`); solo falta el cron externo:
+
+1. **Crea un token de GitHub** para autorizar la llamada:
+   - Ve a [github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta)
+     → **Generate new token** (fine-grained).
+   - **Repository access** → **Only select repositories** → elige
+     `MedicData`.
+   - En **Permissions → Repository permissions**, busca **Actions** y
+     ponlo en **Read and write**.
+   - Genera el token y **cópialo una sola vez** (no lo vuelves a ver).
+   - ⚠️ **No me pegues este token a mí ni lo pongas en el código del
+     repositorio** — es una credencial con acceso a tu cuenta de GitHub.
+     Se configura directo en cron-job.org, en el paso siguiente.
+
+2. **Crea una cuenta gratis en [cron-job.org](https://cron-job.org)** →
+   **Create cronjob**:
+   - **URL**: `https://api.github.com/repos/fernanbuko/MedicData/dispatches`
+   - **Método**: `POST`
+   - **Encabezados (Headers)**:
+     - `Authorization: Bearer TU_TOKEN_AQUÍ`
+     - `Accept: application/vnd.github+json`
+     - `Content-Type: application/json`
+   - **Cuerpo (Body)**: `{"event_type": "revisar-citas"}`
+   - **Horario**: cada 30 minutos.
+   - Guarda.
+
+3. Pruébalo con el botón **"Run now"** de cron-job.org, y confirma en la
+   pestaña **Actions** de tu repo que aparezca una corrida nueva con
+   evento `repository_dispatch` (no `schedule`).
+
+Con esto el robot corre puntual sin depender del scheduler de GitHub. El
+`schedule` de cada 30 minutos se deja como respaldo — no estorba, solo es
+menos puntual.
 
 ## 5. Primer uso
 
