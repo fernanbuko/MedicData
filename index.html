@@ -241,6 +241,20 @@ function formatFechaHora(iso, hora) {
   return hora ? `${formatFecha(iso)}, ${hora}` : formatFecha(iso);
 }
 
+function tiempoRelativo(timestamp) {
+  if (!timestamp) return "";
+  const fecha = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  const segundos = Math.round((Date.now() - fecha.getTime()) / 1000);
+  if (segundos < 60) return "hace un momento";
+  const minutos = Math.round(segundos / 60);
+  if (minutos < 60) return `hace ${minutos} min`;
+  const horas = Math.round(minutos / 60);
+  if (horas < 24) return `hace ${horas} h`;
+  const dias = Math.round(horas / 24);
+  if (dias < 7) return `hace ${dias} d`;
+  return formatFecha(`${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}-${String(fecha.getDate()).padStart(2, "0")}`);
+}
+
 function calcularEdad(fechaNacimiento) {
   if (!fechaNacimiento) return null;
   const [y, m, d] = fechaNacimiento.split("-").map(Number);
@@ -946,6 +960,96 @@ function useConfigConsultorio() {
   return { config: config || {}, loading };
 }
 
+// -----------------------------------------------------------------------
+// Campanita de notificaciones: lista dentro de la app (no solo el aviso
+// push) de los avisos que va dejando el robot de recordatorios en
+// users/{dueño}/notificaciones — citas próximas, controles atrasados, etc.
+// -----------------------------------------------------------------------
+function NotificationBell() {
+  const { items: notificaciones } = useCollection("notificaciones", { orderByField: "creadoEn", direction: "desc" });
+  const [abierta, setAbierta] = React.useState(false);
+  const ref = React.useRef(null);
+
+  React.useEffect(() => {
+    function onClickFuera(e) {
+      if (ref.current && !ref.current.contains(e.target)) setAbierta(false);
+    }
+    document.addEventListener("mousedown", onClickFuera);
+    return () => document.removeEventListener("mousedown", onClickFuera);
+  }, []);
+
+  const noLeidas = notificaciones.filter((n) => !n.leida).length;
+  const visibles = notificaciones.slice(0, 30);
+
+  async function marcarLeida(n) {
+    if (n.leida) return;
+    try {
+      await withTimeout(coll("notificaciones").doc(n.id).set({ leida: true }, { merge: true }));
+    } catch (e) {
+      console.error("Error actualizando notificación:", e);
+    }
+  }
+  async function marcarTodasLeidas() {
+    await Promise.all(
+      notificaciones.filter((n) => !n.leida).map((n) => coll("notificaciones").doc(n.id).set({ leida: true }, { merge: true }).catch(() => {}))
+    );
+  }
+  async function eliminarNotificacion(e, id) {
+    e.stopPropagation();
+    try {
+      await withTimeout(coll("notificaciones").doc(id).delete());
+    } catch (e2) {
+      console.error("Error borrando notificación:", e2);
+    }
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setAbierta((v) => !v)}
+        className="relative w-8 h-8 rounded-full flex items-center justify-center hover:bg-line dark:hover:bg-white/10 text-lg"
+        title="Notificaciones"
+      >
+        🔔
+        {noLeidas > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-warn text-white text-[10px] leading-4 text-center font-semibold">
+            {noLeidas > 9 ? "9+" : noLeidas}
+          </span>
+        )}
+      </button>
+      {abierta && (
+        <div className="absolute right-0 mt-2 w-80 max-w-[90vw] max-h-96 overflow-y-auto bg-card dark:bg-[#0F1B2C] border border-line dark:border-white/10 rounded-lg shadow-lg z-50">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-white/10">
+            <span className="text-sm font-semibold">Notificaciones</span>
+            {noLeidas > 0 && (
+              <button onClick={marcarTodasLeidas} className="text-xs text-accent2 hover:underline">Marcar todas leídas</button>
+            )}
+          </div>
+          {visibles.length === 0 ? (
+            <p className="text-sm text-muted text-center py-8 px-4">No tienes notificaciones todavía.</p>
+          ) : (
+            visibles.map((n) => (
+              <button
+                key={n.id}
+                onClick={() => marcarLeida(n)}
+                className="w-full text-left flex items-start gap-2 px-3 py-2.5 border-b border-line dark:border-white/10 last:border-0 hover:bg-line/30 dark:hover:bg-white/5"
+              >
+                <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.leida ? "bg-transparent" : "bg-accent2"}`} />
+                <span className="flex-1 min-w-0">
+                  <span className={`block text-sm ${n.leida ? "text-muted" : "font-medium"}`}>{n.titulo}</span>
+                  {n.cuerpo && <span className="block text-xs text-muted truncate">{n.cuerpo}</span>}
+                  <span className="block text-[11px] text-faint mt-0.5">{tiempoRelativo(n.creadoEn)}</span>
+                </span>
+                <span onClick={(e) => eliminarNotificacion(e, n.id)} className="text-faint hover:text-warn text-sm px-1 shrink-0">✕</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Layout({ view, setView, seccionesVisibles, onLogout, config, esColaborador, children, oscuro, setOscuro }) {
   const [menuAbierto, setMenuAbierto] = React.useState(false);
   const tabs = TODAS_LAS_SECCIONES.filter((t) => seccionesVisibles.includes(t.key));
@@ -955,18 +1059,28 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
     <div className="min-h-screen flex flex-col md:flex-row">
       {/* Barra lateral (escritorio) */}
       <aside className="hidden md:flex md:flex-col md:w-56 md:shrink-0 border-r border-line dark:border-white/10 bg-white/60 dark:bg-white/5 px-3 py-5">
-        <button
-          onClick={() => setView("inicio")}
-          className="flex items-center gap-2 px-2 mb-6 text-left rounded-lg hover:bg-white dark:hover:bg-white/10 py-1.5 -mx-0.5"
-          title="Ir a Inicio"
-        >
-          {config.logoUrl ? (
-            <img src={config.logoUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" />
-          ) : (
-            <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display shrink-0">+</div>
-          )}
-          <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MedicData"}</span>
-        </button>
+        <div className="flex items-center gap-1 mb-6">
+          <button
+            onClick={() => setView("inicio")}
+            className="flex-1 min-w-0 flex items-center gap-2 px-2 text-left rounded-lg hover:bg-white dark:hover:bg-white/10 py-1.5 -mx-0.5"
+            title="Ir a Inicio"
+          >
+            {config.logoUrl ? (
+              <img src={config.logoUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display shrink-0">+</div>
+            )}
+            <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MedicData"}</span>
+          </button>
+          <NotificationBell />
+          <button onClick={() => setView("config")} title="Mi perfil" className="shrink-0">
+            {config.fotoMedico ? (
+              <img src={config.fotoMedico} className="w-8 h-8 rounded-full object-cover" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
+            )}
+          </button>
+        </div>
         <nav className="flex-1 flex flex-col gap-1">
           {tabs.map((t) => (
             <button
@@ -993,7 +1107,17 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
           )}
           <span className="font-display font-semibold">{config.nombreConsultorio || "MedicData"}</span>
         </button>
-        <button onClick={() => setMenuAbierto((v) => !v)} className="text-2xl leading-none px-1">☰</button>
+        <div className="flex items-center gap-2">
+          <NotificationBell />
+          <button onClick={() => setView("config")} title="Mi perfil">
+            {config.fotoMedico ? (
+              <img src={config.fotoMedico} className="w-7 h-7 rounded-full object-cover" />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
+            )}
+          </button>
+          <button onClick={() => setMenuAbierto((v) => !v)} className="text-2xl leading-none px-1">☰</button>
+        </div>
       </header>
       {menuAbierto && (
         <div className="md:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setMenuAbierto(false)}>
@@ -2253,6 +2377,8 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
   const [direccion, setDireccion] = React.useState(config.direccion || "");
   const [logoUrl, setLogoUrl] = React.useState(config.logoUrl || "");
   const [subiendoLogo, setSubiendoLogo] = React.useState(false);
+  const [fotoMedico, setFotoMedico] = React.useState(config.fotoMedico || "");
+  const [subiendoFotoMedico, setSubiendoFotoMedico] = React.useState(false);
   const [guardando, setGuardando] = React.useState(false);
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
@@ -2265,7 +2391,8 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     setTelefono(config.telefono || "");
     setDireccion(config.direccion || "");
     setLogoUrl(config.logoUrl || "");
-  }, [config.nombreConsultorio, config.nombreMedico, config.especialidad, config.telefono, config.direccion, config.logoUrl]);
+    setFotoMedico(config.fotoMedico || "");
+  }, [config.nombreConsultorio, config.nombreMedico, config.especialidad, config.telefono, config.direccion, config.logoUrl, config.fotoMedico]);
 
   async function guardarPerfil(e) {
     e.preventDefault();
@@ -2274,7 +2401,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     try {
       await withTimeout(
         db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
-          { nombreConsultorio, nombreMedico, especialidad, telefono, direccion, logoUrl },
+          { nombreConsultorio, nombreMedico, especialidad, telefono, direccion, logoUrl, fotoMedico },
           { merge: true }
         )
       );
@@ -2304,6 +2431,25 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     setSubiendoLogo(false);
   }
 
+  async function subirFotoMedico(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendoFotoMedico(true);
+    try {
+      const url = await subirACloudinary(file);
+      setFotoMedico(url);
+      await withTimeout(
+        db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
+          { fotoMedico: url },
+          { merge: true }
+        )
+      );
+    } catch (err) {
+      alert(err.message);
+    }
+    setSubiendoFotoMedico(false);
+  }
+
   async function onActivarNotif() {
     setActivandoNotif(true);
     setErrorNotif("");
@@ -2331,6 +2477,15 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
               <input type="file" accept="image/*" className="hidden" onChange={subirLogo} disabled={subiendoLogo || !cloudinaryReady} />
             </label>
             {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir el logo)</span>}
+          </div>
+          <div className="flex items-center gap-4 mb-4">
+            <div className="w-14 h-14 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
+              {fotoMedico ? <img src={fotoMedico} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
+            </div>
+            <label className="text-sm text-accent2 cursor-pointer hover:underline">
+              {subiendoFotoMedico ? "Subiendo…" : fotoMedico ? "Cambiar mi foto" : "Subir mi foto"}
+              <input type="file" accept="image/*" className="hidden" onChange={subirFotoMedico} disabled={subiendoFotoMedico || !cloudinaryReady} />
+            </label>
           </div>
           <form onSubmit={guardarPerfil}>
             <div className="grid sm:grid-cols-2 gap-x-4">

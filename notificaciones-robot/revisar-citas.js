@@ -68,7 +68,24 @@ function minutosHastaLaCita(fechaTexto, horaTexto) {
   return Math.round((momentoCitaUTC - Date.now()) / 60000);
 }
 
-async function enviarNotificacion(tokens, titulo, cuerpo, url) {
+// Dos cosas separadas, siempre ambas: (1) un documento en
+// users/{ownerUid}/notificaciones para que la campanita dentro de la app
+// lo muestre — esto pasa SIEMPRE, tenga o no tenga el consultorio
+// notificaciones push activadas; (2) un push de verdad, solo si hay al
+// menos un token registrado.
+async function enviarNotificacion(ownerUid, tokens, titulo, cuerpo, url) {
+  try {
+    await db.collection("users").doc(ownerUid).collection("notificaciones").add({
+      titulo,
+      cuerpo,
+      leida: false,
+      url: url || "./index.html",
+      creadoEn: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.error("   ❌ Error guardando notificación en la app:", e.message);
+  }
+
   const tokensValidos = (tokens || []).filter(Boolean);
   if (tokensValidos.length === 0) return;
   try {
@@ -77,28 +94,22 @@ async function enviarNotificacion(tokens, titulo, cuerpo, url) {
       notification: { title: titulo, body: cuerpo },
       data: { url: url || "./index.html" },
     });
-    console.log(`   📨 Notificación enviada a ${tokensValidos.length} dispositivo(s): "${titulo}"`);
+    console.log(`   📨 Push enviado a ${tokensValidos.length} dispositivo(s): "${titulo}"`);
   } catch (e) {
-    console.error("   ❌ Error enviando notificación:", e.message);
+    console.error("   ❌ Error enviando push:", e.message);
   }
 }
 
 async function revisarConsultorio(ownerUid) {
   const configDoc = await db.collection("users").doc(ownerUid).collection("data").doc("config").get();
   const config = configDoc.exists ? configDoc.data() : {};
-  const tokensPropios = config.fcmTokens || [];
-
-  // Junta los tokens de los colaboradores del consultorio, para avisarles
-  // también a ellos (ej. la secretaria) de las citas próximas.
-  const colaboradoresSnap = await db.collection("users").doc(ownerUid).collection("colaboradores").get();
-  let tokens = [...tokensPropios];
   // (Los colaboradores no tienen tokens propios en este esquema simple:
-  // las notificaciones llegan a los dispositivos donde inició sesión la
-  // cuenta dueña del consultorio. Si quieres notificar también a cada
-  // colaborador por separado, guarda sus tokens en su propio documento de
-  // usuario y agrégalos aquí.)
-
-  if (tokens.length === 0) return;
+  // el push llega a los dispositivos donde inició sesión la cuenta dueña
+  // del consultorio. Si quieres notificar también a cada colaborador por
+  // separado, guarda sus tokens en su propio documento de usuario y
+  // súmalos aquí. La notificación EN LA APP sí queda disponible para
+  // todo el equipo, porque vive en los datos compartidos del consultorio.)
+  const tokens = config.fcmTokens || [];
 
   const hoy = hoyComoTexto();
   const ayer = ayerComoTexto();
@@ -118,6 +129,7 @@ async function revisarConsultorio(ownerUid) {
       // Se pasó la fecha y nadie la marcó como atendida: un solo aviso.
       if (!cita.avisoVencidaEnviado) {
         await enviarNotificacion(
+          ownerUid,
           tokens,
           "Cita sin marcar",
           `La cita de ${cita.patientName} de ayer no se marcó como atendida.`
@@ -131,6 +143,7 @@ async function revisarConsultorio(ownerUid) {
     const faltan = minutosHastaLaCita(cita.fecha, cita.hora);
     if (faltan >= 0 && faltan <= MINUTOS_VENTANA && !cita.recordatorioEnviado) {
       await enviarNotificacion(
+        ownerUid,
         tokens,
         "Cita próxima",
         `${cita.patientName} tiene cita hoy a las ${cita.hora} (en ${faltan} min).`
