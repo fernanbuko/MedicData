@@ -28,6 +28,30 @@ service cloud.firestore {
       }
     }
 
+    // Panel de administración (ver PanelAdminView en el código): un
+    // resumen liviano de cada consultorio (nombre, correo, fechas), NO
+    // sus datos clínicos — esos siguen protegidos por las reglas de
+    // arriba. Solo quien inicia sesión con el correo fijado en
+    // ADMIN_EMAIL (dentro de index.html) puede ver la lista completa y
+    // bloquear/desbloquear una cuenta; cambia ese valor por el tuyo si vas
+    // a usar esta parte, y también aquí abajo, en las dos líneas que
+    // dicen "fernandotapia7@gmail.com" — deben ser el mismo correo.
+    match /cuentasRegistradas/{uid} {
+      allow get: if request.auth != null && (
+        request.auth.uid == uid ||
+        request.auth.token.email == "fernandotapia7@gmail.com" ||
+        exists(/databases/$(database)/documents/users/$(uid)/colaboradores/$(request.auth.uid))
+      );
+      allow list: if request.auth != null && request.auth.token.email == "fernandotapia7@gmail.com";
+      allow create: if request.auth != null && request.auth.uid == uid && request.resource.data.bloqueada == false;
+      allow update: if request.auth != null && (
+        request.auth.token.email == "fernandotapia7@gmail.com" ||
+        (request.auth.uid == uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(["ultimaConexion"]))
+      );
+      allow delete: if false;
+    }
+
     // Los códigos de invitación: se necesitan ANTES de iniciar sesión (para
     // validar el código al unirse a un equipo), así que su lectura es
     // pública — el código en sí es una cadena al azar difícil de adivinar,

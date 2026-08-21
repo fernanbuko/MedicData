@@ -26,6 +26,11 @@ fotos/archivos en Cloudinary.
 - **Equipo**: el/la dueño/a del consultorio puede invitar colaboradores
   (secretaria, enfermera, médico/a asociado/a) con un código, y elegir qué
   secciones puede ver cada quien.
+- **Panel de administración**: solo visible para el correo fijado como
+  `ADMIN_EMAIL` en el código — lista todos los consultorios registrados
+  (no sus datos clínicos) y permite bloquear/desbloquear el acceso de una
+  cuenta. Pensado para cuando MedicData se ofrece a más de un consultorio,
+  no para el uso normal del día a día.
 - **Modo oscuro** y **PWA instalable**.
 
 ## 1. Crear tu proyecto de Firebase
