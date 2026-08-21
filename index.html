@@ -1,0 +1,2192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MediData</title>
+
+<!-- Aplica el modo oscuro/claro guardado en este celular ANTES de que
+     cargue cualquier otra cosa, para que no se vea un destello del tema
+     equivocado mientras llegan los datos reales desde la nube. -->
+<script>
+  (function () {
+    try {
+      if (localStorage.getItem("medidata:darkMode") === "1") {
+        document.documentElement.classList.add("dark");
+      }
+    } catch (e) {}
+  })();
+</script>
+
+<!-- PWA: manifest e íconos -->
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="theme-color" content="#1F3A5F" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="MediData" />
+<meta name="mobile-web-app-capable" content="yes" />
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+
+<!-- Tailwind (sin paso de build) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        fontFamily: {
+          serif: ["Fraunces", "serif"],
+          sans: ["Inter", "sans-serif"],
+          mono: ["IBM Plex Mono", "monospace"],
+        },
+        colors: {
+          ink: "#1F3A5F",
+          ink2: "#28507E",
+          paper: "#F5F8FC",
+          card: "#FFFFFF",
+          accent: "#4FA3E3",
+          accent2: "#2E86D9",
+          warn: "#B14E1C",
+          warnbg: "#FDF3E3",
+          warnborder: "#F3DFAE",
+          muted: "#6B7A8C",
+          faint: "#A6B0BF",
+          line: "#DCE3EC",
+        },
+      },
+    },
+  };
+</script>
+
+<!-- React + ReactDOM (UMD, sin paso de build) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel Standalone: permite escribir JSX directo en el navegador -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Firebase (Auth + Firestore + Cloud Messaging) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; overflow-x: hidden; width: 100%; }
+  #root { overflow-x: hidden; max-width: 100vw; min-height: 100vh; }
+  body { font-family: "Inter", sans-serif; background: #F5F8FC; color: #1F3A5F; }
+  html.dark body { background: #0F1B2C; color: #E7EEF7; }
+  h1, h2, h3, .font-display { font-family: "Fraunces", serif; }
+  #boot-msg { font-family: Arial, sans-serif; padding: 32px; max-width: 560px; margin: 40px auto; line-height: 1.5; }
+  input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; }
+  button { cursor: pointer; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #DCE3EC; border-radius: 8px; }
+  html.dark ::-webkit-scrollbar-thumb { background: #28405F; }
+  @media print {
+    body * { visibility: hidden; }
+    #print-area, #print-area * { visibility: visible; }
+    #print-area { position: absolute; left: 0; top: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="boot-msg">Cargando MediData…</div>
+</div>
+<script type="text/babel" data-presets="react">
+// ==========================================================================
+// MediData — historia clínica, recetas, exámenes y agenda para consultorios
+// médicos. Un solo archivo HTML, sin paso de build (React + Babel Standalone
+// vía CDN), guardado offline con un Service Worker, y datos en Firebase.
+// ==========================================================================
+
+/* ---------------------------------------------------------
+   Firebase: reemplaza estos valores con los de TU proyecto
+   de Firebase (Configuración del proyecto → General → Tus apps).
+   Estos datos son públicos (no son contraseñas), es normal que
+   vayan escritos aquí, en el código del navegador.
+----------------------------------------------------------*/
+const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.firebasestorage.app",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID",
+};
+
+// Clave pública (VAPID) para las notificaciones push. Se genera en:
+// Firebase Console → Configuración del proyecto → Cloud Messaging →
+// "Configuración web" → "Generar par de claves".
+const VAPID_KEY = "PENDIENTE_DE_CONFIGURAR";
+
+const CLAVE_PREFERENCIA_NOTIF = "medidata:notifPreference";
+const firebaseReady = firebaseConfig.apiKey && firebaseConfig.apiKey !== "TU_API_KEY";
+
+/* ---------------------------------------------------------
+   Cloudinary: almacenamiento de fotos y archivos (PDFs, imágenes
+   de exámenes). Reemplaza estos dos valores con los de TU cuenta
+   de Cloudinary (cloudinary.com → Dashboard → "Cloud name", y un
+   "Upload preset" que hayas creado en modo "Unsigned").
+----------------------------------------------------------*/
+const CLOUDINARY_CLOUD_NAME = "TU_CLOUD_NAME";
+const CLOUDINARY_UPLOAD_PRESET = "TU_UPLOAD_PRESET";
+const cloudinaryReady = CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME" && CLOUDINARY_UPLOAD_PRESET !== "TU_UPLOAD_PRESET";
+
+let firebaseApp = null;
+let auth = null;
+let db = null;
+let messaging = null;
+if (firebaseReady) {
+  firebaseApp = firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db = firebase.firestore();
+  try {
+    messaging = firebase.messaging.isSupported() ? firebase.messaging() : null;
+  } catch (e) {
+    messaging = null;
+  }
+}
+
+function withTimeout(promise, ms = 15000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("tiempo de espera agotado")), ms)),
+  ]);
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+function hoyISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatFecha(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y) return iso;
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  return dt.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function formatFechaHora(iso, hora) {
+  return hora ? `${formatFecha(iso)}, ${hora}` : formatFecha(iso);
+}
+
+function calcularEdad(fechaNacimiento) {
+  if (!fechaNacimiento) return null;
+  const [y, m, d] = fechaNacimiento.split("-").map(Number);
+  if (!y) return null;
+  const hoy = new Date();
+  let edad = hoy.getFullYear() - y;
+  const cumpleEsteAnio = new Date(hoy.getFullYear(), m - 1, d);
+  if (hoy < cumpleEsteAnio) edad--;
+  return edad;
+}
+
+function calcularIMC(pesoKg, tallaCm) {
+  const peso = parseFloat(pesoKg);
+  const talla = parseFloat(tallaCm);
+  if (!peso || !talla) return null;
+  const tallaM = talla / 100;
+  const imc = peso / (tallaM * tallaM);
+  return Math.round(imc * 10) / 10;
+}
+
+function claseIMC(imc) {
+  if (imc == null) return "";
+  if (imc < 18.5) return "Bajo peso";
+  if (imc < 25) return "Normal";
+  if (imc < 30) return "Sobrepeso";
+  return "Obesidad";
+}
+
+// -----------------------------------------------------------------------
+// Constantes de dominio
+// -----------------------------------------------------------------------
+const TIPOS_DOCUMENTO = ["Cédula", "Pasaporte", "Tarjeta de identidad", "Carné de extranjería", "Otro"];
+const OPCIONES_SEXO = ["Femenino", "Masculino", "Otro"];
+const TIPOS_CITA = [
+  { key: "primera_vez", label: "Primera vez", color: "#2E86D9" },
+  { key: "control", label: "Control", color: "#3D8B62" },
+  { key: "procedimiento", label: "Procedimiento", color: "#B14E1C" },
+  { key: "telemedicina", label: "Telemedicina", color: "#7C5CBF" },
+  { key: "otro", label: "Otro", color: "#6B7A8C" },
+];
+const ESTADOS_CITA = [
+  { key: "pendiente", label: "Pendiente" },
+  { key: "confirmada", label: "Confirmada" },
+  { key: "atendida", label: "Atendida" },
+  { key: "cancelada", label: "Cancelada" },
+  { key: "no_asistio", label: "No asistió" },
+];
+const TIPOS_EXAMEN = ["Laboratorio", "Imagen (rayos X, eco, etc.)", "Otro"];
+const VIAS_ADMINISTRACION = ["Oral", "Tópica", "Intramuscular", "Intravenosa", "Subcutánea", "Inhalada", "Otra"];
+
+const TODAS_LAS_SECCIONES = [
+  { key: "agenda", label: "Agenda" },
+  { key: "pacientes", label: "Pacientes" },
+  { key: "recetas", label: "Recetas" },
+  { key: "examenes", label: "Exámenes" },
+  { key: "config", label: "Configuración" },
+];
+
+// -----------------------------------------------------------------------
+// Capa de datos: multi-consultorio simple.
+// Un colaborador (secretaria, enfermera, médico asociado) ve y edita los
+// mismos datos que el/la dueño/a de la cuenta a la que fue invitado/a.
+// Esto se resuelve una sola vez al iniciar sesión (ver AuthGate) y se
+// guarda en `window.__dataOwnerUid`.
+// -----------------------------------------------------------------------
+function coll(name) {
+  const ownerUid = window.__dataOwnerUid;
+  if (!ownerUid) throw new Error("Aún no se sabe de quién son los datos (dataOwnerUid vacío).");
+  return db.collection("users").doc(ownerUid).collection(name);
+}
+
+function useCollection(name, { orderByField, direction = "asc", enabled = true } = {}) {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    if (!enabled || !firebaseReady || !window.__dataOwnerUid) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    let ref = coll(name);
+    if (orderByField) ref = ref.orderBy(orderByField, direction);
+    const unsub = ref.onSnapshot(
+      (snap) => {
+        setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      (err) => {
+        console.error(`Error leyendo ${name}:`, err);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [name, orderByField, direction, enabled, window.__dataOwnerUid]);
+  return { items, loading };
+}
+
+async function crearDoc(name, data) {
+  const ref = coll(name).doc();
+  const payload = { ...data, creadoEn: firebase.firestore.FieldValue.serverTimestamp() };
+  await withTimeout(ref.set(payload));
+  return ref.id;
+}
+async function actualizarDoc(name, id, data) {
+  await withTimeout(coll(name).doc(id).set({ ...data, actualizadoEn: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }));
+}
+async function borrarDoc(name, id) {
+  await withTimeout(coll(name).doc(id).delete());
+}
+
+// -----------------------------------------------------------------------
+// Cloudinary: subida de fotos y archivos (sin backend propio)
+// -----------------------------------------------------------------------
+async function subirACloudinary(file) {
+  if (!cloudinaryReady) throw new Error("Cloudinary no está configurado todavía.");
+  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  const res = await fetch(url, { method: "POST", body: fd });
+  if (!res.ok) throw new Error("No se pudo subir el archivo.");
+  const data = await res.json();
+  return data.secure_url;
+}
+// -----------------------------------------------------------------------
+// Piezas de interfaz reutilizables
+// -----------------------------------------------------------------------
+function Spinner({ label }) {
+  return (
+    <div className="flex items-center gap-2 text-muted text-sm py-6 justify-center">
+      <div className="w-4 h-4 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+      {label || "Cargando…"}
+    </div>
+  );
+}
+
+function PrimaryButton({ children, onClick, disabled, type = "button", className = "" }) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-ink text-paper text-sm font-medium hover:bg-ink2 transition disabled:opacity-40 disabled:cursor-not-allowed dark:bg-accent dark:text-ink dark:hover:bg-accent2 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryButton({ children, onClick, disabled, type = "button", className = "" }) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg border border-line text-ink text-sm font-medium hover:border-accent hover:shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed dark:text-paper dark:border-white/15 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DangerLink({ children, onClick, className = "" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-sm text-warn hover:underline ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Field({ label, children, hint }) {
+  return (
+    <label className="block mb-3">
+      <span className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1">{label}</span>
+      {children}
+      {hint && <span className="block text-xs text-faint mt-1">{hint}</span>}
+    </label>
+  );
+}
+
+const inputClass =
+  "w-full px-3 py-2.5 rounded-md border border-line bg-white text-ink text-[15px] focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent placeholder-faint dark:bg-white/5 dark:text-paper dark:border-white/15";
+
+function TextInput(props) {
+  return <input {...props} className={`${inputClass} ${props.className || ""}`} />;
+}
+function TextArea(props) {
+  return <textarea {...props} className={`${inputClass} ${props.className || ""}`} />;
+}
+function Select({ children, ...props }) {
+  return (
+    <select {...props} className={`${inputClass} ${props.className || ""}`}>
+      {children}
+    </select>
+  );
+}
+
+function Card({ children, className = "" }) {
+  return <div className={`bg-card rounded-xl border border-line shadow-sm p-4 dark:bg-white/5 dark:border-white/10 ${className}`}>{children}</div>;
+}
+
+function Badge({ children, color = "#6B7A8C", className = "" }) {
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${className}`}
+      style={{ backgroundColor: `${color}20`, color }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Modal({ title, onClose, children, wide }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start sm:items-center justify-center p-3 overflow-y-auto" onClick={onClose}>
+      <div
+        className={`bg-card dark:bg-[#0F1B2C] rounded-xl shadow-lg w-full ${wide ? "max-w-2xl" : "max-w-lg"} my-6`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line dark:border-white/10">
+          <h2 className="text-lg font-semibold font-display">{title}</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink dark:hover:text-paper text-xl leading-none px-1">×</button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, hint }) {
+  return (
+    <div className="text-center py-16 text-muted">
+      <div className="text-3xl mb-2">{icon}</div>
+      <div className="font-medium text-ink dark:text-paper">{title}</div>
+      {hint && <div className="text-sm mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function SearchInput({ value, onChange, placeholder }) {
+  return (
+    <div className="relative flex-1 min-w-0">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-faint">⌕</span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder || "Buscar…"}
+        className={`${inputClass} pl-9`}
+      />
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// Autenticación: iniciar sesión, crear cuenta de consultorio, o unirse
+// como colaborador/a (secretaria, enfermera, médico asociado) con un
+// código de invitación que genera el/la dueño/a de la cuenta.
+// -----------------------------------------------------------------------
+function generarCodigoInvitacion() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < 7; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+function LoginScreen() {
+  const [modo, setModo] = React.useState("login"); // login | crear | colaborador
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [nombreConsultorio, setNombreConsultorio] = React.useState("");
+  const [nombreMedico, setNombreMedico] = React.useState("");
+  const [codigoInvitacion, setCodigoInvitacion] = React.useState("");
+  const [nombreColaborador, setNombreColaborador] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [cargando, setCargando] = React.useState(false);
+
+  async function iniciarSesion(e) {
+    e.preventDefault();
+    setError("");
+    setCargando(true);
+    try {
+      await withTimeout(auth.signInWithEmailAndPassword(email.trim(), password));
+    } catch (err) {
+      setError(traducirErrorAuth(err));
+    }
+    setCargando(false);
+  }
+
+  async function crearCuenta(e) {
+    e.preventDefault();
+    setError("");
+    if (!nombreConsultorio.trim() || !nombreMedico.trim()) {
+      setError("Completa el nombre del consultorio y tu nombre.");
+      return;
+    }
+    setCargando(true);
+    try {
+      const cred = await withTimeout(auth.createUserWithEmailAndPassword(email.trim(), password));
+      const nuevoUid = cred.user.uid;
+      const codigo = generarCodigoInvitacion();
+      await withTimeout(
+        db.collection("users").doc(nuevoUid).collection("data").doc("config").set({
+          nombreConsultorio: nombreConsultorio.trim(),
+          nombreMedico: nombreMedico.trim(),
+          especialidad: "",
+          telefono: "",
+          direccion: "",
+          inviteCode: codigo,
+        })
+      );
+      await withTimeout(db.collection("inviteCodes").doc(codigo).set({ ownerUid: nuevoUid }));
+    } catch (err) {
+      setError(traducirErrorAuth(err));
+    }
+    setCargando(false);
+  }
+
+  async function unirseComoColaborador(e) {
+    e.preventDefault();
+    setError("");
+    const codigo = codigoInvitacion.trim().toUpperCase();
+    if (!codigo || !nombreColaborador.trim()) {
+      setError("Completa el código de invitación y tu nombre.");
+      return;
+    }
+    setCargando(true);
+    try {
+      const invDoc = await withTimeout(db.collection("inviteCodes").doc(codigo).get());
+      if (!invDoc.exists) {
+        setError("Ese código de invitación no existe. Pídele al consultorio que te lo confirme.");
+        setCargando(false);
+        return;
+      }
+      const ownerUid = invDoc.data().ownerUid;
+      const cred = await withTimeout(auth.createUserWithEmailAndPassword(email.trim(), password));
+      const nuevoUid = cred.user.uid;
+      await withTimeout(
+        db.collection("users").doc(nuevoUid).collection("meta").doc("perfil").set({
+          duenoUid: ownerUid,
+          nombre: nombreColaborador.trim(),
+          email: email.trim(),
+        })
+      );
+      await withTimeout(
+        db.collection("users").doc(ownerUid).collection("colaboradores").doc(nuevoUid).set({
+          nombre: nombreColaborador.trim(),
+          email: email.trim(),
+          secciones: ["agenda", "pacientes"],
+          creadoEn: firebase.firestore.FieldValue.serverTimestamp(),
+        })
+      );
+    } catch (err) {
+      setError(traducirErrorAuth(err));
+    }
+    setCargando(false);
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-ink mx-auto mb-3 flex items-center justify-center text-paper text-2xl font-display dark:bg-accent dark:text-ink">+</div>
+          <h1 className="text-3xl font-display font-semibold">MediData</h1>
+          <p className="text-muted text-sm mt-1">Historia clínica, recetas, exámenes y agenda</p>
+        </div>
+
+        <div className="flex gap-1 mb-5 bg-white/60 dark:bg-white/5 rounded-lg p-1 border border-line dark:border-white/10">
+          {[
+            ["login", "Iniciar sesión"],
+            ["crear", "Crear consultorio"],
+            ["colaborador", "Unirme a un equipo"],
+          ].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => { setModo(k); setError(""); }}
+              className={`flex-1 text-xs sm:text-sm font-medium px-2 py-2 rounded-md transition ${
+                modo === k ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "text-muted hover:text-ink dark:hover:text-paper"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {!firebaseReady && (
+          <Card className="mb-4 !border-warnborder !bg-warnbg text-warn text-sm">
+            Este proyecto todavía no tiene Firebase configurado. Reemplaza los valores de ejemplo en{" "}
+            <code>firebaseConfig</code> (dentro de <code>index.html</code>) con los de tu propio proyecto de Firebase
+            para poder iniciar sesión y guardar tus datos. Revisa el <code>README.md</code> para el paso a paso.
+          </Card>
+        )}
+
+        <Card>
+          {modo === "login" && (
+            <form onSubmit={iniciarSesion}>
+              <Field label="Correo"><TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+              <Field label="Contraseña"><TextInput type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+              {error && <p className="text-warn text-sm mb-3">{error}</p>}
+              <PrimaryButton type="submit" disabled={cargando || !firebaseReady} className="w-full justify-center">
+                {cargando ? "Ingresando…" : "Iniciar sesión"}
+              </PrimaryButton>
+            </form>
+          )}
+
+          {modo === "crear" && (
+            <form onSubmit={crearCuenta}>
+              <Field label="Nombre del consultorio"><TextInput required value={nombreConsultorio} onChange={(e) => setNombreConsultorio(e.target.value)} placeholder="Ej. Consultorio Dr. Pérez" /></Field>
+              <Field label="Tu nombre"><TextInput required value={nombreMedico} onChange={(e) => setNombreMedico(e.target.value)} /></Field>
+              <Field label="Correo"><TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+              <Field label="Contraseña" hint="Mínimo 6 caracteres"><TextInput type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+              {error && <p className="text-warn text-sm mb-3">{error}</p>}
+              <PrimaryButton type="submit" disabled={cargando || !firebaseReady} className="w-full justify-center">
+                {cargando ? "Creando…" : "Crear mi consultorio"}
+              </PrimaryButton>
+            </form>
+          )}
+
+          {modo === "colaborador" && (
+            <form onSubmit={unirseComoColaborador}>
+              <Field label="Código de invitación" hint="Te lo da el/la dueño/a del consultorio, en Configuración."><TextInput required value={codigoInvitacion} onChange={(e) => setCodigoInvitacion(e.target.value.toUpperCase())} placeholder="Ej. AB3D9KX" /></Field>
+              <Field label="Tu nombre"><TextInput required value={nombreColaborador} onChange={(e) => setNombreColaborador(e.target.value)} /></Field>
+              <Field label="Correo"><TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+              <Field label="Contraseña" hint="Mínimo 6 caracteres"><TextInput type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+              {error && <p className="text-warn text-sm mb-3">{error}</p>}
+              <PrimaryButton type="submit" disabled={cargando || !firebaseReady} className="w-full justify-center">
+                {cargando ? "Uniéndome…" : "Unirme al equipo"}
+              </PrimaryButton>
+            </form>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function traducirErrorAuth(err) {
+  const code = err && err.code;
+  const mapa = {
+    "auth/invalid-email": "Ese correo no es válido.",
+    "auth/user-not-found": "No existe una cuenta con ese correo.",
+    "auth/wrong-password": "Contraseña incorrecta.",
+    "auth/invalid-credential": "Correo o contraseña incorrectos.",
+    "auth/email-already-in-use": "Ya existe una cuenta con ese correo.",
+    "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
+    "auth/network-request-failed": "Problema de conexión. Intenta de nuevo.",
+  };
+  return mapa[code] || (err && err.message) || "Ocurrió un error inesperado.";
+}
+
+// Resuelve, después de iniciar sesión, de QUIÉN son los datos que hay que
+// mostrar: si esta cuenta es dueña de un consultorio, son los suyos; si es
+// colaborador/a, son los de la persona que la invitó.
+function useDataOwner(user) {
+  const [estado, setEstado] = React.useState({ cargando: true, ownerUid: null, esColaborador: false, perfilColaborador: null });
+
+  React.useEffect(() => {
+    if (!user) {
+      setEstado({ cargando: false, ownerUid: null, esColaborador: false, perfilColaborador: null });
+      window.__dataOwnerUid = null;
+      return;
+    }
+    let cancelado = false;
+    (async () => {
+      try {
+        const metaDoc = await withTimeout(db.collection("users").doc(user.uid).collection("meta").doc("perfil").get());
+        if (cancelado) return;
+        if (metaDoc.exists && metaDoc.data().duenoUid) {
+          const ownerUid = metaDoc.data().duenoUid;
+          window.__dataOwnerUid = ownerUid;
+          setEstado({ cargando: false, ownerUid, esColaborador: true, perfilColaborador: metaDoc.data() });
+        } else {
+          window.__dataOwnerUid = user.uid;
+          setEstado({ cargando: false, ownerUid: user.uid, esColaborador: false, perfilColaborador: null });
+        }
+      } catch (e) {
+        console.error("Error resolviendo dueño de los datos:", e);
+        window.__dataOwnerUid = user.uid;
+        setEstado({ cargando: false, ownerUid: user.uid, esColaborador: false, perfilColaborador: null });
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [user && user.uid]);
+
+  return estado;
+}
+// -----------------------------------------------------------------------
+// Layout: navegación (barra lateral en escritorio, barra inferior en
+// celular), filtrada según el rol de quien inició sesión.
+// -----------------------------------------------------------------------
+function useConfigConsultorio() {
+  const [config, setConfig] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    if (!window.__dataOwnerUid) return;
+    setLoading(true);
+    const unsub = db
+      .collection("users")
+      .doc(window.__dataOwnerUid)
+      .collection("data")
+      .doc("config")
+      .onSnapshot((doc) => {
+        setConfig(doc.exists ? doc.data() : {});
+        setLoading(false);
+      });
+    return () => unsub();
+  }, [window.__dataOwnerUid]);
+  return { config: config || {}, loading };
+}
+
+function Layout({ view, setView, seccionesVisibles, onLogout, config, esColaborador, children, oscuro, setOscuro }) {
+  const [menuAbierto, setMenuAbierto] = React.useState(false);
+  const tabs = TODAS_LAS_SECCIONES.filter((t) => seccionesVisibles.includes(t.key));
+  const iconos = { agenda: "🗓", pacientes: "🧑‍⚕️", recetas: "📋", examenes: "🧪", config: "⚙" };
+
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row">
+      {/* Barra lateral (escritorio) */}
+      <aside className="hidden md:flex md:flex-col md:w-56 md:shrink-0 border-r border-line dark:border-white/10 bg-white/60 dark:bg-white/5 px-3 py-5">
+        <div className="flex items-center gap-2 px-2 mb-6">
+          <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display">+</div>
+          <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MediData"}</span>
+        </div>
+        <nav className="flex-1 flex flex-col gap-1">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setView(t.key)}
+              className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-left transition ${
+                view === t.key ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "text-muted hover:bg-white hover:text-ink dark:hover:bg-white/10 dark:hover:text-paper"
+              }`}
+            >
+              <span>{iconos[t.key]}</span>{t.label}
+            </button>
+          ))}
+        </nav>
+        <button onClick={onLogout} className="text-sm text-muted hover:text-warn text-left px-3 py-2">Cerrar sesión</button>
+      </aside>
+
+      {/* Barra superior (celular) */}
+      <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-line dark:border-white/10 bg-white/70 dark:bg-white/5 sticky top-0 z-30">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink text-sm font-display">+</div>
+          <span className="font-display font-semibold">{config.nombreConsultorio || "MediData"}</span>
+        </div>
+        <button onClick={() => setMenuAbierto((v) => !v)} className="text-2xl leading-none px-1">☰</button>
+      </header>
+      {menuAbierto && (
+        <div className="md:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setMenuAbierto(false)}>
+          <div className="bg-card dark:bg-[#0F1B2C] w-64 h-full p-4 flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => { setView(t.key); setMenuAbierto(false); }}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-left ${
+                  view === t.key ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "text-muted"
+                }`}
+              >
+                <span>{iconos[t.key]}</span>{t.label}
+              </button>
+            ))}
+            <button onClick={() => setOscuro(!oscuro)} className="px-3 py-2.5 text-sm text-left text-muted">
+              {oscuro ? "☀ Modo claro" : "🌙 Modo oscuro"}
+            </button>
+            <button onClick={onLogout} className="px-3 py-2.5 text-sm text-left text-warn mt-2">Cerrar sesión</button>
+          </div>
+        </div>
+      )}
+
+      <main className="flex-1 min-w-0 pb-20 md:pb-8">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+          <div className="hidden md:flex justify-end mb-2">
+            <button onClick={() => setOscuro(!oscuro)} className="text-xs text-muted hover:text-ink dark:hover:text-paper">
+              {oscuro ? "☀ Modo claro" : "🌙 Modo oscuro"}
+            </button>
+          </div>
+          {esColaborador && (
+            <div className="mb-4 text-xs px-3 py-1.5 rounded-full bg-accent/10 text-ink2 dark:text-accent inline-block">
+              Colaborando en el consultorio de {config.nombreMedico || "—"}
+            </div>
+          )}
+          {children}
+        </div>
+      </main>
+
+      {/* Barra inferior (celular) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-[#0F1B2C]/95 backdrop-blur border-t border-line dark:border-white/10 flex">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setView(t.key)}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${
+              view === t.key ? "text-ink dark:text-accent" : "text-faint"
+            }`}
+          >
+            <span className="text-lg leading-none">{iconos[t.key]}</span>{t.label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// Pacientes: listado, ficha (formulario) y detalle con historia clínica,
+// recetas y exámenes de cada persona.
+// -----------------------------------------------------------------------
+function PatientForm({ paciente, onClose, onSaved }) {
+  const [data, setData] = React.useState(
+    paciente || {
+      nombre: "",
+      documentoTipo: "Cédula",
+      documentoNumero: "",
+      fechaNacimiento: "",
+      sexo: "Femenino",
+      telefono: "",
+      email: "",
+      direccion: "",
+      contactoEmergenciaNombre: "",
+      contactoEmergenciaTelefono: "",
+      seguroMedico: "",
+      alergias: "",
+      antecedentes: "",
+      foto: "",
+    }
+  );
+  const [subiendoFoto, setSubiendoFoto] = React.useState(false);
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
+
+  async function subirFoto(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendoFoto(true);
+    try {
+      const url = await subirACloudinary(file);
+      setData((d) => ({ ...d, foto: url }));
+    } catch (err) {
+      setError(err.message);
+    }
+    setSubiendoFoto(false);
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!data.nombre.trim()) {
+      setError("El nombre es obligatorio.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      if (paciente && paciente.id) {
+        await actualizarDoc("pacientes", paciente.id, data);
+      } else {
+        await crearDoc("pacientes", data);
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <Modal title={paciente ? "Editar paciente" : "Nuevo paciente"} onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div className="flex items-center gap-4 mb-4">
+          <div className="w-16 h-16 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
+            {data.foto ? <img src={data.foto} className="w-full h-full object-cover" /> : "🧑"}
+          </div>
+          <label className="text-sm text-accent2 cursor-pointer hover:underline">
+            {subiendoFoto ? "Subiendo…" : "Subir foto"}
+            <input type="file" accept="image/*" className="hidden" onChange={subirFoto} disabled={subiendoFoto || !cloudinaryReady} />
+          </label>
+          {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir fotos)</span>}
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-x-4">
+          <Field label="Nombre completo"><TextInput required value={data.nombre} onChange={set("nombre")} /></Field>
+          <Field label="Fecha de nacimiento"><TextInput type="date" value={data.fechaNacimiento} onChange={set("fechaNacimiento")} /></Field>
+          <Field label="Tipo de documento">
+            <Select value={data.documentoTipo} onChange={set("documentoTipo")}>
+              {TIPOS_DOCUMENTO.map((t) => <option key={t}>{t}</option>)}
+            </Select>
+          </Field>
+          <Field label="Número de documento"><TextInput value={data.documentoNumero} onChange={set("documentoNumero")} /></Field>
+          <Field label="Sexo">
+            <Select value={data.sexo} onChange={set("sexo")}>
+              {OPCIONES_SEXO.map((s) => <option key={s}>{s}</option>)}
+            </Select>
+          </Field>
+          <Field label="Teléfono"><TextInput value={data.telefono} onChange={set("telefono")} /></Field>
+          <Field label="Correo"><TextInput type="email" value={data.email} onChange={set("email")} /></Field>
+          <Field label="Seguro médico / EPS"><TextInput value={data.seguroMedico} onChange={set("seguroMedico")} /></Field>
+        </div>
+        <Field label="Dirección"><TextInput value={data.direccion} onChange={set("direccion")} /></Field>
+        <div className="grid sm:grid-cols-2 gap-x-4">
+          <Field label="Contacto de emergencia"><TextInput value={data.contactoEmergenciaNombre} onChange={set("contactoEmergenciaNombre")} /></Field>
+          <Field label="Teléfono de emergencia"><TextInput value={data.contactoEmergenciaTelefono} onChange={set("contactoEmergenciaTelefono")} /></Field>
+        </div>
+        <Field label="Alergias"><TextArea rows={2} value={data.alergias} onChange={set("alergias")} placeholder="Ej. Penicilina, mariscos…" /></Field>
+        <Field label="Antecedentes médicos"><TextArea rows={2} value={data.antecedentes} onChange={set("antecedentes")} placeholder="Enfermedades crónicas, cirugías previas, etc." /></Field>
+
+        {error && <p className="text-warn text-sm mb-3">{error}</p>}
+        <div className="flex gap-2 justify-end mt-2">
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function PacientesView({ onAbrirPaciente }) {
+  const { items: pacientes, loading } = useCollection("pacientes", { orderByField: "nombre" });
+  const [busqueda, setBusqueda] = React.useState("");
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+
+  const filtrados = pacientes.filter((p) => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return true;
+    return (p.nombre || "").toLowerCase().includes(q) || (p.documentoNumero || "").toLowerCase().includes(q) || (p.telefono || "").includes(q);
+  });
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
+        <h1 className="text-2xl font-display font-semibold">Pacientes</h1>
+        <PrimaryButton onClick={() => setMostrarForm(true)}>+ Nuevo paciente</PrimaryButton>
+      </div>
+      <div className="mb-4"><SearchInput value={busqueda} onChange={setBusqueda} placeholder="Buscar por nombre, documento o teléfono…" /></div>
+
+      {loading ? (
+        <Spinner />
+      ) : filtrados.length === 0 ? (
+        <EmptyState icon="🧑‍⚕️" title={pacientes.length ? "No hay resultados" : "Todavía no hay pacientes"} hint={pacientes.length ? "Prueba con otra búsqueda." : "Crea el primero con el botón de arriba."} />
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-3">
+          {filtrados.map((p) => {
+            const edad = calcularEdad(p.fechaNacimiento);
+            return (
+              <button key={p.id} onClick={() => onAbrirPaciente(p.id)} className="text-left">
+                <Card className="hover:border-accent hover:shadow-md transition flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
+                    {p.foto ? <img src={p.foto} className="w-full h-full object-cover" /> : "🧑"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium truncate">{p.nombre}</div>
+                    <div className="text-xs text-muted truncate">
+                      {edad != null ? `${edad} años` : ""}{edad != null && p.telefono ? " · " : ""}{p.telefono}
+                    </div>
+                  </div>
+                </Card>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {mostrarForm && <PatientForm onClose={() => setMostrarForm(false)} onSaved={() => setMostrarForm(false)} />}
+    </div>
+  );
+}
+
+function fila(label, valor) {
+  if (!valor) return "";
+  return `<div style="margin-bottom:6px"><strong>${esc(label)}:</strong> ${esc(valor)}</div>`;
+}
+
+function imprimirFichaPaciente(paciente, consultas, recetas, examenes, config) {
+  const historiaHtml = consultas
+    .map(
+      (c) => `
+    <div style="margin:14px 0;padding:10px;border:1px solid #ddd;border-radius:6px">
+      <div style="font-size:12px;color:#666">${esc(formatFechaHora(c.fecha, c.hora))}</div>
+      ${fila("Motivo de consulta", c.motivoConsulta)}
+      ${fila("Diagnóstico", c.diagnostico)}
+      ${fila("Plan", c.plan)}
+    </div>`
+    )
+    .join("");
+  const win = window.open("", "_blank");
+  win.document.write(`
+    <html><head><title>Ficha - ${esc(paciente.nombre)}</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#1F3A5F;max-width:760px;margin:0 auto} h1{font-size:22px} h2{font-size:16px;margin-top:22px;border-bottom:1px solid #ddd;padding-bottom:4px}</style>
+    </head><body>
+      <h1>${esc(config.nombreConsultorio || "Consultorio médico")}</h1>
+      <p style="color:#666">${esc(config.nombreMedico || "")} ${config.especialidad ? "· " + esc(config.especialidad) : ""}</p>
+      <h2>Datos del paciente</h2>
+      ${fila("Nombre", paciente.nombre)}
+      ${fila("Documento", `${paciente.documentoTipo || ""} ${paciente.documentoNumero || ""}`)}
+      ${fila("Fecha de nacimiento", formatFecha(paciente.fechaNacimiento))}
+      ${fila("Sexo", paciente.sexo)}
+      ${fila("Teléfono", paciente.telefono)}
+      ${fila("Seguro médico", paciente.seguroMedico)}
+      ${fila("Alergias", paciente.alergias)}
+      ${fila("Antecedentes", paciente.antecedentes)}
+      <h2>Historia clínica</h2>
+      ${historiaHtml || "<p>Sin consultas registradas.</p>"}
+    </body></html>
+  `);
+  win.document.close();
+  win.print();
+}
+
+function PatientDetail({ patientId, onVolver, config }) {
+  const { items: pacientes } = useCollection("pacientes");
+  const paciente = pacientes.find((p) => p.id === patientId);
+  const { items: consultasTodas } = useCollection("consultas", { orderByField: "fecha", direction: "desc" });
+  const { items: recetasTodas } = useCollection("recetas", { orderByField: "fecha", direction: "desc" });
+  const { items: examenesTodos } = useCollection("examenes", { orderByField: "fecha", direction: "desc" });
+  const [tab, setTab] = React.useState("historia");
+  const [mostrarEditar, setMostrarEditar] = React.useState(false);
+  const [mostrarConsulta, setMostrarConsulta] = React.useState(false);
+
+  if (!paciente) return <Spinner label="Cargando paciente…" />;
+
+  const consultas = consultasTodas.filter((c) => c.patientId === patientId);
+  const recetas = recetasTodas.filter((r) => r.patientId === patientId);
+  const examenes = examenesTodos.filter((e) => e.patientId === patientId);
+  const edad = calcularEdad(paciente.fechaNacimiento);
+
+  const tabs = [
+    ["historia", "Historia clínica"],
+    ["recetas", "Recetas"],
+    ["examenes", "Exámenes"],
+  ];
+
+  return (
+    <div>
+      <button onClick={onVolver} className="text-sm text-muted hover:text-ink dark:hover:text-paper mb-4">← Volver a pacientes</button>
+
+      <Card className="mb-5">
+        <div className="flex items-start gap-4 flex-wrap">
+          <div className="w-16 h-16 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted text-2xl">
+            {paciente.foto ? <img src={paciente.foto} className="w-full h-full object-cover" /> : "🧑"}
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <h1 className="text-xl font-display font-semibold">{paciente.nombre}</h1>
+            <div className="text-sm text-muted mt-0.5">
+              {edad != null ? `${edad} años` : ""} {paciente.sexo ? `· ${paciente.sexo}` : ""} {paciente.documentoNumero ? `· ${paciente.documentoTipo} ${paciente.documentoNumero}` : ""}
+            </div>
+            <div className="text-sm text-muted mt-0.5">{paciente.telefono} {paciente.email ? `· ${paciente.email}` : ""}</div>
+            {paciente.alergias && (
+              <div className="mt-2 text-xs px-2 py-1 rounded-md bg-warnbg text-warn border border-warnborder inline-block">⚠ Alergias: {paciente.alergias}</div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <SecondaryButton onClick={() => setMostrarEditar(true)}>Editar</SecondaryButton>
+            <SecondaryButton onClick={() => imprimirFichaPaciente(paciente, consultas, recetas, examenes, config)}>Imprimir ficha</SecondaryButton>
+          </div>
+        </div>
+      </Card>
+
+      <div className="flex gap-1 mb-4 border-b border-line dark:border-white/10">
+        {tabs.map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${tab === k ? "border-ink dark:border-accent text-ink dark:text-accent" : "border-transparent text-muted"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "historia" && (
+        <div>
+          <div className="flex justify-end mb-3"><PrimaryButton onClick={() => setMostrarConsulta(true)}>+ Nueva consulta</PrimaryButton></div>
+          {consultas.length === 0 ? (
+            <EmptyState icon="📄" title="Sin consultas registradas" />
+          ) : (
+            <div className="space-y-3">
+              {consultas.map((c) => <ConsultaCard key={c.id} consulta={c} />)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "recetas" && <RecetasDePaciente paciente={paciente} recetas={recetas} config={config} />}
+      {tab === "examenes" && <ExamenesDePaciente paciente={paciente} examenes={examenes} />}
+
+      {mostrarEditar && <PatientForm paciente={paciente} onClose={() => setMostrarEditar(false)} onSaved={() => setMostrarEditar(false)} />}
+      {mostrarConsulta && <ConsultaForm paciente={paciente} onClose={() => setMostrarConsulta(false)} onSaved={() => setMostrarConsulta(false)} />}
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// Consultas: cada visita queda registrada con signos vitales, motivo,
+// examen físico, diagnóstico, plan y próximo control.
+// -----------------------------------------------------------------------
+function ConsultaForm({ paciente, citaId, onClose, onSaved }) {
+  const [data, setData] = React.useState({
+    fecha: hoyISO(),
+    hora: new Date().toTimeString().slice(0, 5),
+    motivoConsulta: "",
+    sintomas: "",
+    presionArterial: "",
+    frecuenciaCardiaca: "",
+    frecuenciaRespiratoria: "",
+    temperatura: "",
+    saturacionO2: "",
+    peso: "",
+    talla: "",
+    examenFisico: "",
+    diagnostico: "",
+    plan: "",
+    indicaciones: "",
+    proximoControl: "",
+  });
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
+  const imc = calcularIMC(data.peso, data.talla);
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!data.motivoConsulta.trim()) {
+      setError("El motivo de consulta es obligatorio.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      await crearDoc("consultas", {
+        ...data,
+        patientId: paciente.id,
+        patientName: paciente.nombre,
+      });
+      if (citaId) {
+        await actualizarDoc("citas", citaId, { estado: "atendida" });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <Modal title={`Nueva consulta — ${paciente.nombre}`} onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div className="grid sm:grid-cols-2 gap-x-4">
+          <Field label="Fecha"><TextInput type="date" required value={data.fecha} onChange={set("fecha")} /></Field>
+          <Field label="Hora"><TextInput type="time" value={data.hora} onChange={set("hora")} /></Field>
+        </div>
+        <Field label="Motivo de consulta"><TextArea rows={2} required value={data.motivoConsulta} onChange={set("motivoConsulta")} /></Field>
+        <Field label="Síntomas / anamnesis"><TextArea rows={2} value={data.sintomas} onChange={set("sintomas")} /></Field>
+
+        <div className="mt-2 mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Signos vitales</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4">
+          <Field label="Presión arterial"><TextInput value={data.presionArterial} onChange={set("presionArterial")} placeholder="120/80" /></Field>
+          <Field label="Frec. cardíaca (lpm)"><TextInput type="number" value={data.frecuenciaCardiaca} onChange={set("frecuenciaCardiaca")} /></Field>
+          <Field label="Frec. respiratoria (rpm)"><TextInput type="number" value={data.frecuenciaRespiratoria} onChange={set("frecuenciaRespiratoria")} /></Field>
+          <Field label="Temperatura (°C)"><TextInput type="number" step="0.1" value={data.temperatura} onChange={set("temperatura")} /></Field>
+          <Field label="Sat. O₂ (%)"><TextInput type="number" value={data.saturacionO2} onChange={set("saturacionO2")} /></Field>
+          <Field label="Peso (kg)"><TextInput type="number" step="0.1" value={data.peso} onChange={set("peso")} /></Field>
+          <Field label="Talla (cm)"><TextInput type="number" value={data.talla} onChange={set("talla")} /></Field>
+          <Field label="IMC">
+            <div className={`${inputClass} flex items-center bg-line/40 dark:bg-white/10`}>
+              {imc != null ? `${imc} · ${claseIMC(imc)}` : "—"}
+            </div>
+          </Field>
+        </div>
+
+        <Field label="Examen físico"><TextArea rows={2} value={data.examenFisico} onChange={set("examenFisico")} /></Field>
+        <Field label="Diagnóstico"><TextArea rows={2} value={data.diagnostico} onChange={set("diagnostico")} /></Field>
+        <Field label="Plan / tratamiento"><TextArea rows={2} value={data.plan} onChange={set("plan")} /></Field>
+        <Field label="Indicaciones para el paciente"><TextArea rows={2} value={data.indicaciones} onChange={set("indicaciones")} /></Field>
+        <Field label="Próximo control (opcional)"><TextInput type="date" value={data.proximoControl} onChange={set("proximoControl")} /></Field>
+
+        {error && <p className="text-warn text-sm mb-3">{error}</p>}
+        <div className="flex gap-2 justify-end mt-2">
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar consulta"}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ConsultaCard({ consulta }) {
+  const [abierta, setAbierta] = React.useState(false);
+  const imc = calcularIMC(consulta.peso, consulta.talla);
+  return (
+    <Card>
+      <button className="w-full text-left flex items-center justify-between gap-2" onClick={() => setAbierta((v) => !v)}>
+        <div>
+          <div className="text-xs text-muted">{formatFechaHora(consulta.fecha, consulta.hora)}</div>
+          <div className="font-medium">{consulta.motivoConsulta}</div>
+        </div>
+        <span className="text-faint">{abierta ? "−" : "+"}</span>
+      </button>
+      {abierta && (
+        <div className="mt-3 pt-3 border-t border-line dark:border-white/10 text-sm space-y-2">
+          {consulta.sintomas && <p><span className="font-semibold">Síntomas:</span> {consulta.sintomas}</p>}
+          {(consulta.presionArterial || consulta.frecuenciaCardiaca || consulta.temperatura) && (
+            <p className="text-muted">
+              {consulta.presionArterial && `PA ${consulta.presionArterial}  `}
+              {consulta.frecuenciaCardiaca && `FC ${consulta.frecuenciaCardiaca}lpm  `}
+              {consulta.frecuenciaRespiratoria && `FR ${consulta.frecuenciaRespiratoria}rpm  `}
+              {consulta.temperatura && `T° ${consulta.temperatura}°C  `}
+              {consulta.saturacionO2 && `SatO₂ ${consulta.saturacionO2}%  `}
+              {consulta.peso && `Peso ${consulta.peso}kg  `}
+              {consulta.talla && `Talla ${consulta.talla}cm  `}
+              {imc != null && `IMC ${imc} (${claseIMC(imc)})`}
+            </p>
+          )}
+          {consulta.examenFisico && <p><span className="font-semibold">Examen físico:</span> {consulta.examenFisico}</p>}
+          {consulta.diagnostico && <p><span className="font-semibold">Diagnóstico:</span> {consulta.diagnostico}</p>}
+          {consulta.plan && <p><span className="font-semibold">Plan:</span> {consulta.plan}</p>}
+          {consulta.indicaciones && <p><span className="font-semibold">Indicaciones:</span> {consulta.indicaciones}</p>}
+          {consulta.proximoControl && <p><span className="font-semibold">Próximo control:</span> {formatFecha(consulta.proximoControl)}</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
+// -----------------------------------------------------------------------
+// Recetas: uno o más medicamentos por receta, con dosis/vía/frecuencia/
+// duración. Se puede imprimir o compartir como texto (WhatsApp, correo…).
+// -----------------------------------------------------------------------
+function medicamentoVacio() {
+  return { nombre: "", dosis: "", via: "Oral", frecuencia: "", duracion: "", indicaciones: "" };
+}
+
+function RecetaForm({ paciente, onClose, onSaved }) {
+  const [fecha, setFecha] = React.useState(hoyISO());
+  const [diagnostico, setDiagnostico] = React.useState("");
+  const [notas, setNotas] = React.useState("");
+  const [medicamentos, setMedicamentos] = React.useState([medicamentoVacio()]);
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  function set(i, campo, valor) {
+    setMedicamentos((ms) => ms.map((m, idx) => (idx === i ? { ...m, [campo]: valor } : m)));
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    const validos = medicamentos.filter((m) => m.nombre.trim());
+    if (validos.length === 0) {
+      setError("Agrega al menos un medicamento.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      await crearDoc("recetas", {
+        patientId: paciente.id,
+        patientName: paciente.nombre,
+        fecha,
+        diagnostico,
+        notas,
+        medicamentos: validos,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <Modal title={`Nueva receta — ${paciente.nombre}`} onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div className="grid sm:grid-cols-2 gap-x-4">
+          <Field label="Fecha"><TextInput type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+          <Field label="Diagnóstico"><TextInput value={diagnostico} onChange={(e) => setDiagnostico(e.target.value)} /></Field>
+        </div>
+
+        <div className="mt-2 mb-2 text-xs font-semibold uppercase tracking-wider text-muted">Medicamentos</div>
+        <div className="space-y-3">
+          {medicamentos.map((m, i) => (
+            <div key={i} className="border border-line dark:border-white/10 rounded-lg p-3 relative">
+              {medicamentos.length > 1 && (
+                <button type="button" onClick={() => setMedicamentos((ms) => ms.filter((_, idx) => idx !== i))} className="absolute top-2 right-2 text-faint hover:text-warn text-sm">✕</button>
+              )}
+              <div className="grid sm:grid-cols-2 gap-x-4">
+                <Field label="Medicamento"><TextInput value={m.nombre} onChange={(e) => set(i, "nombre", e.target.value)} /></Field>
+                <Field label="Dosis"><TextInput value={m.dosis} onChange={(e) => set(i, "dosis", e.target.value)} placeholder="Ej. 500 mg" /></Field>
+                <Field label="Vía">
+                  <Select value={m.via} onChange={(e) => set(i, "via", e.target.value)}>
+                    {VIAS_ADMINISTRACION.map((v) => <option key={v}>{v}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Frecuencia"><TextInput value={m.frecuencia} onChange={(e) => set(i, "frecuencia", e.target.value)} placeholder="Ej. cada 8 horas" /></Field>
+                <Field label="Duración"><TextInput value={m.duracion} onChange={(e) => set(i, "duracion", e.target.value)} placeholder="Ej. 7 días" /></Field>
+              </div>
+              <Field label="Indicaciones específicas"><TextInput value={m.indicaciones} onChange={(e) => set(i, "indicaciones", e.target.value)} placeholder="Ej. Tomar con alimentos" /></Field>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={() => setMedicamentos((ms) => [...ms, medicamentoVacio()])} className="text-sm text-accent2 hover:underline mt-2">+ Agregar otro medicamento</button>
+
+        <Field label="Notas adicionales"><TextArea rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+
+        {error && <p className="text-warn text-sm mb-3">{error}</p>}
+        <div className="flex gap-2 justify-end mt-3">
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar receta"}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function construirTextoReceta(r, config) {
+  const lineas = [];
+  lineas.push(config.nombreConsultorio || "Consultorio médico");
+  if (config.nombreMedico) lineas.push(config.nombreMedico + (config.especialidad ? ` · ${config.especialidad}` : ""));
+  lineas.push("");
+  lineas.push(`Paciente: ${r.patientName}`);
+  lineas.push(`Fecha: ${formatFecha(r.fecha)}`);
+  if (r.diagnostico) lineas.push(`Diagnóstico: ${r.diagnostico}`);
+  lineas.push("");
+  lineas.push("RECETA:");
+  r.medicamentos.forEach((m, i) => {
+    lineas.push(`${i + 1}. ${m.nombre} — ${m.dosis} — ${m.via} — ${m.frecuencia} — ${m.duracion}`);
+    if (m.indicaciones) lineas.push(`   ${m.indicaciones}`);
+  });
+  if (r.notas) {
+    lineas.push("");
+    lineas.push(`Notas: ${r.notas}`);
+  }
+  return lineas.join("\n");
+}
+
+function compartirReceta(r, config) {
+  const texto = construirTextoReceta(r, config);
+  if (navigator.share) {
+    navigator.share({ title: `Receta — ${r.patientName}`, text: texto }).catch(() => {});
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(texto).then(
+      () => alert("Receta copiada. Puedes pegarla en WhatsApp, correo o donde prefieras enviarla."),
+      () => alert(texto)
+    );
+  } else {
+    alert(texto);
+  }
+}
+
+function imprimirReceta(r, config) {
+  const win = window.open("", "_blank");
+  const filas = r.medicamentos
+    .map(
+      (m, i) => `
+    <tr>
+      <td style="padding:6px;border-bottom:1px solid #eee">${i + 1}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee"><strong>${esc(m.nombre)}</strong>${m.indicaciones ? `<br><span style="color:#666;font-size:12px">${esc(m.indicaciones)}</span>` : ""}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${esc(m.dosis)}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${esc(m.via)}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${esc(m.frecuencia)}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${esc(m.duracion)}</td>
+    </tr>`
+    )
+    .join("");
+  win.document.write(`
+    <html><head><title>Receta - ${esc(r.patientName)}</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#1F3A5F;max-width:720px;margin:0 auto}
+    table{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
+    th{text-align:left;padding:6px;border-bottom:2px solid #1F3A5F;font-size:12px;text-transform:uppercase;color:#666}</style>
+    </head><body>
+      <h1>${esc(config.nombreConsultorio || "Consultorio médico")}</h1>
+      <p style="color:#666">${esc(config.nombreMedico || "")} ${config.especialidad ? "· " + esc(config.especialidad) : ""}</p>
+      <hr>
+      <p><strong>Paciente:</strong> ${esc(r.patientName)} &nbsp;&nbsp; <strong>Fecha:</strong> ${esc(formatFecha(r.fecha))}</p>
+      ${r.diagnostico ? `<p><strong>Diagnóstico:</strong> ${esc(r.diagnostico)}</p>` : ""}
+      <h2>Receta</h2>
+      <table><thead><tr><th>#</th><th>Medicamento</th><th>Dosis</th><th>Vía</th><th>Frecuencia</th><th>Duración</th></tr></thead>
+      <tbody>${filas}</tbody></table>
+      ${r.notas ? `<p style="margin-top:16px"><strong>Notas:</strong> ${esc(r.notas)}</p>` : ""}
+      <div style="margin-top:60px;text-align:center;border-top:1px solid #333;width:260px;padding-top:6px;font-size:12px;color:#666">Firma y sello</div>
+    </body></html>
+  `);
+  win.document.close();
+  win.print();
+}
+
+function TarjetaReceta({ r, config }) {
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <div className="text-xs text-muted">{formatFecha(r.fecha)}</div>
+          {r.diagnostico && <div className="text-sm text-muted">{r.diagnostico}</div>}
+        </div>
+        <div className="flex gap-1">
+          <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={() => compartirReceta(r, config)}>Compartir</SecondaryButton>
+          <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={() => imprimirReceta(r, config)}>Imprimir</SecondaryButton>
+        </div>
+      </div>
+      <ul className="mt-2 text-sm space-y-1">
+        {r.medicamentos.map((m, i) => (
+          <li key={i}>• <strong>{m.nombre}</strong> — {m.dosis}, {m.via}, {m.frecuencia}, {m.duracion}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function RecetasDePaciente({ paciente, recetas, config }) {
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+  return (
+    <div>
+      <div className="flex justify-end mb-3"><PrimaryButton onClick={() => setMostrarForm(true)}>+ Nueva receta</PrimaryButton></div>
+      {recetas.length === 0 ? (
+        <EmptyState icon="📋" title="Sin recetas registradas" />
+      ) : (
+        <div className="space-y-3">{recetas.map((r) => <TarjetaReceta key={r.id} r={r} config={config} />)}</div>
+      )}
+      {mostrarForm && <RecetaForm paciente={paciente} onClose={() => setMostrarForm(false)} onSaved={() => setMostrarForm(false)} />}
+    </div>
+  );
+}
+
+function RecetasView({ config }) {
+  const { items: pacientes } = useCollection("pacientes", { orderByField: "nombre" });
+  const { items: recetas, loading } = useCollection("recetas", { orderByField: "fecha", direction: "desc" });
+  const [pacienteSel, setPacienteSel] = React.useState("");
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
+        <h1 className="text-2xl font-display font-semibold">Recetas</h1>
+        <div className="flex gap-2 items-center">
+          <Select value={pacienteSel} onChange={(e) => setPacienteSel(e.target.value)} className="!w-auto">
+            <option value="">Elegir paciente…</option>
+            {pacientes.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </Select>
+          <PrimaryButton disabled={!pacienteSel} onClick={() => setMostrarForm(true)}>+ Nueva</PrimaryButton>
+        </div>
+      </div>
+      {loading ? (
+        <Spinner />
+      ) : recetas.length === 0 ? (
+        <EmptyState icon="📋" title="Todavía no hay recetas" />
+      ) : (
+        <div className="space-y-3">
+          {recetas.map((r) => (
+            <div key={r.id}>
+              <div className="text-sm font-medium mb-1">{r.patientName}</div>
+              <TarjetaReceta r={r} config={config} />
+            </div>
+          ))}
+        </div>
+      )}
+      {mostrarForm && pacienteSel && (
+        <RecetaForm
+          paciente={pacientes.find((p) => p.id === pacienteSel)}
+          onClose={() => setMostrarForm(false)}
+          onSaved={() => setMostrarForm(false)}
+        />
+      )}
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// Exámenes: laboratorio, imágenes u otros — con resultado en texto y/o
+// un archivo adjunto (PDF o foto) guardado en Cloudinary.
+// -----------------------------------------------------------------------
+function ExamenForm({ paciente, onClose, onSaved }) {
+  const [data, setData] = React.useState({
+    fecha: hoyISO(),
+    tipo: TIPOS_EXAMEN[0],
+    nombreExamen: "",
+    resultado: "",
+    archivoUrl: "",
+    notas: "",
+  });
+  const [subiendo, setSubiendo] = React.useState(false);
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
+
+  async function subirArchivo(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendo(true);
+    try {
+      const url = await subirACloudinary(file);
+      setData((d) => ({ ...d, archivoUrl: url }));
+    } catch (err) {
+      setError(err.message);
+    }
+    setSubiendo(false);
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!data.nombreExamen.trim()) {
+      setError("El nombre del examen es obligatorio.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      await crearDoc("examenes", { ...data, patientId: paciente.id, patientName: paciente.nombre });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <Modal title={`Nuevo examen — ${paciente.nombre}`} onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div className="grid sm:grid-cols-2 gap-x-4">
+          <Field label="Fecha"><TextInput type="date" required value={data.fecha} onChange={set("fecha")} /></Field>
+          <Field label="Tipo">
+            <Select value={data.tipo} onChange={set("tipo")}>
+              {TIPOS_EXAMEN.map((t) => <option key={t}>{t}</option>)}
+            </Select>
+          </Field>
+        </div>
+        <Field label="Nombre del examen"><TextInput required value={data.nombreExamen} onChange={set("nombreExamen")} placeholder="Ej. Hemograma completo" /></Field>
+        <Field label="Resultado"><TextArea rows={3} value={data.resultado} onChange={set("resultado")} /></Field>
+        <Field label="Archivo adjunto (PDF o foto)">
+          <div className="flex items-center gap-3">
+            {data.archivoUrl && (
+              <a href={data.archivoUrl} target="_blank" rel="noreferrer" className="text-sm text-accent2 hover:underline">Ver archivo actual</a>
+            )}
+            <label className="text-sm text-accent2 cursor-pointer hover:underline">
+              {subiendo ? "Subiendo…" : data.archivoUrl ? "Cambiar archivo" : "Adjuntar archivo"}
+              <input type="file" accept="image/*,.pdf" className="hidden" onChange={subirArchivo} disabled={subiendo || !cloudinaryReady} />
+            </label>
+          </div>
+          {!cloudinaryReady && <span className="text-xs text-faint block mt-1">(configura Cloudinary para poder adjuntar archivos)</span>}
+        </Field>
+        <Field label="Notas"><TextArea rows={2} value={data.notas} onChange={set("notas")} /></Field>
+
+        {error && <p className="text-warn text-sm mb-3">{error}</p>}
+        <div className="flex gap-2 justify-end mt-2">
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar examen"}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function TarjetaExamen({ e }) {
+  const esImagen = e.archivoUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(e.archivoUrl);
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <div className="text-xs text-muted">{formatFecha(e.fecha)} · {e.tipo}</div>
+          <div className="font-medium">{e.nombreExamen}</div>
+        </div>
+        {e.archivoUrl && <a href={e.archivoUrl} target="_blank" rel="noreferrer" className="text-sm text-accent2 hover:underline shrink-0">Ver archivo</a>}
+      </div>
+      {e.resultado && <p className="text-sm mt-2 whitespace-pre-wrap">{e.resultado}</p>}
+      {esImagen && <img src={e.archivoUrl} className="mt-2 rounded-lg max-h-56 object-cover" />}
+      {e.notas && <p className="text-sm text-muted mt-2">{e.notas}</p>}
+    </Card>
+  );
+}
+
+function ExamenesDePaciente({ paciente, examenes }) {
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+  return (
+    <div>
+      <div className="flex justify-end mb-3"><PrimaryButton onClick={() => setMostrarForm(true)}>+ Nuevo examen</PrimaryButton></div>
+      {examenes.length === 0 ? (
+        <EmptyState icon="🧪" title="Sin exámenes registrados" />
+      ) : (
+        <div className="space-y-3">{examenes.map((e) => <TarjetaExamen key={e.id} e={e} />)}</div>
+      )}
+      {mostrarForm && <ExamenForm paciente={paciente} onClose={() => setMostrarForm(false)} onSaved={() => setMostrarForm(false)} />}
+    </div>
+  );
+}
+
+function ExamenesView() {
+  const { items: pacientes } = useCollection("pacientes", { orderByField: "nombre" });
+  const { items: examenes, loading } = useCollection("examenes", { orderByField: "fecha", direction: "desc" });
+  const [pacienteSel, setPacienteSel] = React.useState("");
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
+        <h1 className="text-2xl font-display font-semibold">Exámenes</h1>
+        <div className="flex gap-2 items-center">
+          <Select value={pacienteSel} onChange={(e) => setPacienteSel(e.target.value)} className="!w-auto">
+            <option value="">Elegir paciente…</option>
+            {pacientes.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </Select>
+          <PrimaryButton disabled={!pacienteSel} onClick={() => setMostrarForm(true)}>+ Nuevo</PrimaryButton>
+        </div>
+      </div>
+      {loading ? (
+        <Spinner />
+      ) : examenes.length === 0 ? (
+        <EmptyState icon="🧪" title="Todavía no hay exámenes" />
+      ) : (
+        <div className="space-y-3">
+          {examenes.map((e) => (
+            <div key={e.id}>
+              <div className="text-sm font-medium mb-1">{e.patientName}</div>
+              <TarjetaExamen e={e} />
+            </div>
+          ))}
+        </div>
+      )}
+      {mostrarForm && pacienteSel && (
+        <ExamenForm
+          paciente={pacientes.find((p) => p.id === pacienteSel)}
+          onClose={() => setMostrarForm(false)}
+          onSaved={() => setMostrarForm(false)}
+        />
+      )}
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// Agenda: calendario mensual con las citas programadas. Al tocar un día
+// se puede agendar una cita nueva o revisar/editar las que ya existen.
+// -----------------------------------------------------------------------
+const DIAS_SEMANA = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function diasDelMes(anio, mes) {
+  const primerDia = new Date(anio, mes, 1);
+  const ultimoDia = new Date(anio, mes + 1, 0);
+  const inicioSemana = (primerDia.getDay() + 6) % 7; // lunes=0
+  const celdas = [];
+  for (let i = 0; i < inicioSemana; i++) celdas.push(null);
+  for (let d = 1; d <= ultimoDia.getDate(); d++) celdas.push(d);
+  return celdas;
+}
+
+function isoDeCelda(anio, mes, dia) {
+  return `${anio}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+}
+
+function tipoCitaInfo(key) {
+  return TIPOS_CITA.find((t) => t.key === key) || TIPOS_CITA[TIPOS_CITA.length - 1];
+}
+function estadoCitaInfo(key) {
+  return ESTADOS_CITA.find((e) => e.key === key) || ESTADOS_CITA[0];
+}
+
+function CitaForm({ fechaInicial, cita, onClose, onSaved }) {
+  const { items: pacientes } = useCollection("pacientes", { orderByField: "nombre" });
+  const [data, setData] = React.useState(
+    cita || {
+      patientId: "",
+      fecha: fechaInicial || hoyISO(),
+      hora: "09:00",
+      tipo: "primera_vez",
+      estado: "pendiente",
+      notas: "",
+    }
+  );
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!data.patientId) {
+      setError("Elige un paciente.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      const paciente = pacientes.find((p) => p.id === data.patientId);
+      const payload = { ...data, patientName: paciente ? paciente.nombre : data.patientName };
+      if (cita && cita.id) {
+        await actualizarDoc("citas", cita.id, payload);
+      } else {
+        await crearDoc("citas", { ...payload, recordatorioEnviado: false });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  async function eliminar() {
+    if (!confirm("¿Eliminar esta cita?")) return;
+    setGuardando(true);
+    try {
+      await borrarDoc("citas", cita.id);
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <Modal title={cita ? "Editar cita" : "Agendar cita"} onClose={onClose}>
+      <form onSubmit={guardar}>
+        <Field label="Paciente">
+          <Select required value={data.patientId} onChange={set("patientId")}>
+            <option value="">Elegir paciente…</option>
+            {pacientes.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </Select>
+        </Field>
+        <div className="grid grid-cols-2 gap-x-4">
+          <Field label="Fecha"><TextInput type="date" required value={data.fecha} onChange={set("fecha")} /></Field>
+          <Field label="Hora"><TextInput type="time" required value={data.hora} onChange={set("hora")} /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4">
+          <Field label="Tipo">
+            <Select value={data.tipo} onChange={set("tipo")}>
+              {TIPOS_CITA.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </Select>
+          </Field>
+          <Field label="Estado">
+            <Select value={data.estado} onChange={set("estado")}>
+              {ESTADOS_CITA.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </Select>
+          </Field>
+        </div>
+        <Field label="Notas"><TextArea rows={2} value={data.notas} onChange={set("notas")} /></Field>
+
+        {error && <p className="text-warn text-sm mb-3">{error}</p>}
+        <div className="flex gap-2 justify-between mt-2">
+          {cita ? <DangerLink onClick={eliminar}>Eliminar cita</DangerLink> : <span />}
+          <div className="flex gap-2">
+            <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+            <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function PanelDia({ fecha, citas, onCerrar, onNuevaCita, onEditarCita, onIniciarConsulta }) {
+  return (
+    <Card className="mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">{formatFecha(fecha)}</h3>
+        <div className="flex gap-2">
+          <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={onNuevaCita}>+ Agendar</SecondaryButton>
+          <button onClick={onCerrar} className="text-faint hover:text-ink dark:hover:text-paper text-lg leading-none px-1">×</button>
+        </div>
+      </div>
+      {citas.length === 0 ? (
+        <p className="text-sm text-muted">No hay citas este día.</p>
+      ) : (
+        <div className="space-y-2">
+          {citas
+            .sort((a, b) => (a.hora < b.hora ? -1 : 1))
+            .map((c) => {
+              const tipo = tipoCitaInfo(c.tipo);
+              const estado = estadoCitaInfo(c.estado);
+              return (
+                <div key={c.id} className="flex items-center gap-2 p-2 rounded-lg border border-line dark:border-white/10">
+                  <span className="text-xs font-mono text-muted w-12 shrink-0">{c.hora}</span>
+                  <button className="flex-1 min-w-0 text-left" onClick={() => onEditarCita(c)}>
+                    <div className="font-medium truncate">{c.patientName}</div>
+                    <div className="flex gap-1 mt-0.5">
+                      <Badge color={tipo.color}>{tipo.label}</Badge>
+                      <Badge color={c.estado === "cancelada" ? "#B14E1C" : c.estado === "atendida" ? "#3D8B62" : "#6B7A8C"}>{estado.label}</Badge>
+                    </div>
+                  </button>
+                  {c.estado !== "atendida" && c.estado !== "cancelada" && (
+                    <SecondaryButton className="!px-2 !py-1 !text-xs shrink-0" onClick={() => onIniciarConsulta(c)}>Atender</SecondaryButton>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AgendaView() {
+  const hoy = new Date();
+  const [mesActual, setMesActual] = React.useState(hoy.getMonth());
+  const [anioActual, setAnioActual] = React.useState(hoy.getFullYear());
+  const [diaSel, setDiaSel] = React.useState(null);
+  const [mostrarForm, setMostrarForm] = React.useState(false);
+  const [citaEditando, setCitaEditando] = React.useState(null);
+  const [consultaDesdeCita, setConsultaDesdeCita] = React.useState(null);
+
+  const { items: citas, loading } = useCollection("citas", { orderByField: "fecha" });
+  const { items: pacientes } = useCollection("pacientes");
+
+  const celdas = diasDelMes(anioActual, mesActual);
+  const citasPorDia = {};
+  citas.forEach((c) => {
+    (citasPorDia[c.fecha] = citasPorDia[c.fecha] || []).push(c);
+  });
+
+  function cambiarMes(delta) {
+    let m = mesActual + delta;
+    let a = anioActual;
+    if (m < 0) { m = 11; a--; }
+    if (m > 11) { m = 0; a++; }
+    setMesActual(m);
+    setAnioActual(a);
+    setDiaSel(null);
+  }
+
+  const hoyIso = hoyISO();
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-2xl font-display font-semibold">Agenda</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={() => cambiarMes(-1)} className="px-2 py-1 rounded hover:bg-line dark:hover:bg-white/10">‹</button>
+          <span className="text-sm font-medium w-36 text-center">{MESES[mesActual]} {anioActual}</span>
+          <button onClick={() => cambiarMes(1)} className="px-2 py-1 rounded hover:bg-line dark:hover:bg-white/10">›</button>
+        </div>
+      </div>
+
+      {loading ? (
+        <Spinner />
+      ) : (
+        <>
+          <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-muted mb-1">
+            {DIAS_SEMANA.map((d) => <div key={d}>{d}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {celdas.map((dia, i) => {
+              if (dia == null) return <div key={i} />;
+              const iso = isoDeCelda(anioActual, mesActual, dia);
+              const citasDia = citasPorDia[iso] || [];
+              const esHoy = iso === hoyIso;
+              const esSel = iso === diaSel;
+              return (
+                <button
+                  key={i}
+                  onClick={() => setDiaSel(iso)}
+                  className={`aspect-square rounded-lg border text-sm p-1 flex flex-col items-center justify-start gap-0.5 transition ${
+                    esSel ? "border-ink dark:border-accent bg-ink/5 dark:bg-accent/10" : "border-line dark:border-white/10 hover:border-accent"
+                  }`}
+                >
+                  <span className={`text-xs ${esHoy ? "w-5 h-5 rounded-full bg-ink text-paper dark:bg-accent dark:text-ink flex items-center justify-center" : ""}`}>{dia}</span>
+                  {citasDia.length > 0 && (
+                    <span className="flex gap-0.5 flex-wrap justify-center">
+                      {citasDia.slice(0, 3).map((c) => (
+                        <span key={c.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tipoCitaInfo(c.tipo).color }} />
+                      ))}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {diaSel && (
+            <PanelDia
+              fecha={diaSel}
+              citas={citasPorDia[diaSel] || []}
+              onCerrar={() => setDiaSel(null)}
+              onNuevaCita={() => setMostrarForm(true)}
+              onEditarCita={(c) => setCitaEditando(c)}
+              onIniciarConsulta={(c) => setConsultaDesdeCita(c)}
+            />
+          )}
+        </>
+      )}
+
+      {mostrarForm && <CitaForm fechaInicial={diaSel} onClose={() => setMostrarForm(false)} onSaved={() => setMostrarForm(false)} />}
+      {citaEditando && <CitaForm cita={citaEditando} onClose={() => setCitaEditando(null)} onSaved={() => setCitaEditando(null)} />}
+      {consultaDesdeCita && (
+        <ConsultaForm
+          paciente={pacientes.find((p) => p.id === consultaDesdeCita.patientId) || { id: consultaDesdeCita.patientId, nombre: consultaDesdeCita.patientName }}
+          citaId={consultaDesdeCita.id}
+          onClose={() => setConsultaDesdeCita(null)}
+          onSaved={() => setConsultaDesdeCita(null)}
+        />
+      )}
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// Configuración: datos del consultorio, equipo (colaboradores) y
+// notificaciones push.
+// -----------------------------------------------------------------------
+async function activarNotificaciones() {
+  if (!messaging) throw new Error("Este navegador no soporta notificaciones push, o Firebase no está configurado.");
+  if (VAPID_KEY === "PENDIENTE_DE_CONFIGURAR") throw new Error("Falta configurar la clave VAPID en el código (VAPID_KEY).");
+  const permiso = await Notification.requestPermission();
+  if (permiso !== "granted") throw new Error("No se concedió permiso para notificaciones.");
+  const reg = await navigator.serviceWorker.ready;
+  const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+  if (!token) throw new Error("No se pudo obtener el token de notificaciones.");
+  await withTimeout(
+    db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
+      { fcmTokens: firebase.firestore.FieldValue.arrayUnion(token) },
+      { merge: true }
+    )
+  );
+  localStorage.setItem(CLAVE_PREFERENCIA_NOTIF, "1");
+}
+
+function ConfigView({ config, esColaborador, perfilColaborador, user }) {
+  const [nombreConsultorio, setNombreConsultorio] = React.useState(config.nombreConsultorio || "");
+  const [nombreMedico, setNombreMedico] = React.useState(config.nombreMedico || "");
+  const [especialidad, setEspecialidad] = React.useState(config.especialidad || "");
+  const [telefono, setTelefono] = React.useState(config.telefono || "");
+  const [direccion, setDireccion] = React.useState(config.direccion || "");
+  const [guardando, setGuardando] = React.useState(false);
+  const [guardado, setGuardado] = React.useState(false);
+  const [errorNotif, setErrorNotif] = React.useState("");
+  const [activandoNotif, setActivandoNotif] = React.useState(false);
+
+  React.useEffect(() => {
+    setNombreConsultorio(config.nombreConsultorio || "");
+    setNombreMedico(config.nombreMedico || "");
+    setEspecialidad(config.especialidad || "");
+    setTelefono(config.telefono || "");
+    setDireccion(config.direccion || "");
+  }, [config.nombreConsultorio, config.nombreMedico, config.especialidad, config.telefono, config.direccion]);
+
+  async function guardarPerfil(e) {
+    e.preventDefault();
+    setGuardando(true);
+    setGuardado(false);
+    try {
+      await withTimeout(
+        db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
+          { nombreConsultorio, nombreMedico, especialidad, telefono, direccion },
+          { merge: true }
+        )
+      );
+      setGuardado(true);
+    } catch (err) {
+      alert(err.message);
+    }
+    setGuardando(false);
+  }
+
+  async function onActivarNotif() {
+    setActivandoNotif(true);
+    setErrorNotif("");
+    try {
+      await activarNotificaciones();
+    } catch (err) {
+      setErrorNotif(err.message);
+    }
+    setActivandoNotif(false);
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <h1 className="text-2xl font-display font-semibold mb-5">Configuración</h1>
+
+      {!esColaborador && (
+        <Card className="mb-5">
+          <h2 className="font-semibold mb-3">Datos del consultorio</h2>
+          <form onSubmit={guardarPerfil}>
+            <div className="grid sm:grid-cols-2 gap-x-4">
+              <Field label="Nombre del consultorio"><TextInput value={nombreConsultorio} onChange={(e) => setNombreConsultorio(e.target.value)} /></Field>
+              <Field label="Tu nombre"><TextInput value={nombreMedico} onChange={(e) => setNombreMedico(e.target.value)} /></Field>
+              <Field label="Especialidad"><TextInput value={especialidad} onChange={(e) => setEspecialidad(e.target.value)} /></Field>
+              <Field label="Teléfono"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
+            </div>
+            <Field label="Dirección"><TextInput value={direccion} onChange={(e) => setDireccion(e.target.value)} /></Field>
+            <div className="flex items-center gap-3">
+              <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
+              {guardado && <span className="text-sm text-muted">Guardado ✓</span>}
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {!esColaborador && (
+        <Card className="mb-5">
+          <h2 className="font-semibold mb-1">Invitar a mi equipo</h2>
+          <p className="text-sm text-muted mb-3">Comparte este código con tu secretaria, enfermera o médico/a asociado/a para que se una desde "Unirme a un equipo" en la pantalla de inicio de sesión.</p>
+          <div className="flex items-center gap-2">
+            <code className="px-3 py-2 rounded-md bg-line/50 dark:bg-white/10 font-mono text-lg tracking-widest">{config.inviteCode || "—"}</code>
+            <SecondaryButton
+              className="!px-2.5 !py-1.5 !text-xs"
+              onClick={() => { navigator.clipboard && navigator.clipboard.writeText(config.inviteCode || ""); }}
+            >
+              Copiar
+            </SecondaryButton>
+          </div>
+          <ColaboradoresLista />
+        </Card>
+      )}
+
+      <Card className="mb-5">
+        <h2 className="font-semibold mb-2">Notificaciones push</h2>
+        <p className="text-sm text-muted mb-3">Recibe un aviso en el celular cuando falte poco para una cita.</p>
+        <SecondaryButton onClick={onActivarNotif} disabled={activandoNotif}>{activandoNotif ? "Activando…" : "Activar notificaciones"}</SecondaryButton>
+        {errorNotif && <p className="text-warn text-sm mt-2">{errorNotif}</p>}
+      </Card>
+
+      {(!firebaseReady || !cloudinaryReady) && (
+        <Card className="!border-warnborder !bg-warnbg text-warn text-sm">
+          <p className="font-medium mb-1">Faltan pasos de configuración</p>
+          <ul className="list-disc pl-5 space-y-1">
+            {!firebaseReady && <li>Firebase: reemplaza <code>firebaseConfig</code> en <code>index.html</code>.</li>}
+            {!cloudinaryReady && <li>Cloudinary: reemplaza <code>CLOUDINARY_CLOUD_NAME</code> y <code>CLOUDINARY_UPLOAD_PRESET</code> en <code>index.html</code>.</li>}
+          </ul>
+          <p className="mt-2">Revisa el <code>README.md</code> del proyecto para el paso a paso.</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function ColaboradoresLista() {
+  const [colaboradores, setColaboradores] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!window.__dataOwnerUid) return;
+    const unsub = db
+      .collection("users")
+      .doc(window.__dataOwnerUid)
+      .collection("colaboradores")
+      .onSnapshot((snap) => {
+        setColaboradores(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      });
+    return () => unsub();
+  }, [window.__dataOwnerUid]);
+
+  async function alternarSeccion(colabId, secciones, key) {
+    const nuevas = secciones.includes(key) ? secciones.filter((s) => s !== key) : [...secciones, key];
+    await withTimeout(
+      db.collection("users").doc(window.__dataOwnerUid).collection("colaboradores").doc(colabId).set(
+        { secciones: nuevas },
+        { merge: true }
+      )
+    );
+  }
+
+  async function quitarColaborador(colabId) {
+    if (!confirm("¿Quitar a esta persona del equipo? Ya no podrá ver los datos del consultorio.")) return;
+    await withTimeout(db.collection("users").doc(window.__dataOwnerUid).collection("colaboradores").doc(colabId).delete());
+  }
+
+  if (loading) return <Spinner />;
+  if (colaboradores.length === 0) return <p className="text-sm text-faint mt-4">Todavía nadie se ha unido con este código.</p>;
+
+  return (
+    <div className="mt-4 space-y-2">
+      {colaboradores.map((c) => (
+        <div key={c.id} className="border border-line dark:border-white/10 rounded-lg p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-medium text-sm">{c.nombre}</div>
+              <div className="text-xs text-muted">{c.email}</div>
+            </div>
+            <DangerLink onClick={() => quitarColaborador(c.id)}>Quitar</DangerLink>
+          </div>
+          <div className="flex gap-1.5 flex-wrap mt-2">
+            {TODAS_LAS_SECCIONES.filter((s) => s.key !== "config").map((s) => {
+              const activo = (c.secciones || []).includes(s.key);
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => alternarSeccion(c.id, c.secciones || [], s.key)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                    activo ? "bg-ink text-paper border-ink dark:bg-accent dark:text-ink dark:border-accent" : "border-line text-muted dark:border-white/15"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+// -----------------------------------------------------------------------
+// App raíz: sesión, resolución de dueño de los datos, navegación y
+// registro del Service Worker.
+// -----------------------------------------------------------------------
+function BootWarning() {
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="max-w-md text-center">
+        <h1 className="text-2xl font-display font-semibold mb-2">MediData</h1>
+        <p className="text-muted text-sm">
+          Reemplaza los valores de ejemplo en <code>firebaseConfig</code> (arriba del todo en el código, en{" "}
+          <code>index.html</code>) con los de tu propio proyecto de Firebase para poder iniciar sesión y guardar tus
+          datos. Revisa el <code>README.md</code> para el paso a paso.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = React.useState(undefined); // undefined = todavía no se sabe
+  const [oscuro, setOscuro] = React.useState(() => {
+    try {
+      return localStorage.getItem("medidata:darkMode") === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+  const [view, setView] = React.useState("agenda");
+  const [patientIdAbierto, setPatientIdAbierto] = React.useState(null);
+
+  React.useEffect(() => {
+    document.documentElement.classList.toggle("dark", oscuro);
+    try {
+      localStorage.setItem("medidata:darkMode", oscuro ? "1" : "0");
+    } catch (e) {}
+  }, [oscuro]);
+
+  React.useEffect(() => {
+    if (!firebaseReady) {
+      setUser(null);
+      return;
+    }
+    const unsub = auth.onAuthStateChanged((u) => setUser(u));
+    return () => unsub();
+  }, []);
+
+  React.useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("No se pudo registrar el Service Worker:", e));
+    }
+  }, []);
+
+  const dataOwnerEstado = useDataOwner(user);
+  const { config, loading: cargandoConfig } = useConfigConsultorio();
+
+  const [colaboradorSecciones, setColaboradorSecciones] = React.useState(null);
+  React.useEffect(() => {
+    if (!dataOwnerEstado.esColaborador || !user) {
+      setColaboradorSecciones(null);
+      return;
+    }
+    const unsub = db
+      .collection("users")
+      .doc(dataOwnerEstado.ownerUid)
+      .collection("colaboradores")
+      .doc(user.uid)
+      .onSnapshot((doc) => setColaboradorSecciones(doc.exists ? doc.data().secciones || [] : []));
+    return () => unsub();
+  }, [dataOwnerEstado.esColaborador, dataOwnerEstado.ownerUid, user && user.uid]);
+
+  if (!firebaseReady) return <BootWarning />;
+  if (user === undefined || dataOwnerEstado.cargando) {
+    return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando MediData…" /></div>;
+  }
+  if (!user) return <LoginScreen />;
+  if (dataOwnerEstado.esColaborador && colaboradorSecciones === null) {
+    return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando tu equipo…" /></div>;
+  }
+
+  const seccionesVisibles = dataOwnerEstado.esColaborador
+    ? Array.from(new Set([...(colaboradorSecciones || []), "config"]))
+    : TODAS_LAS_SECCIONES.map((s) => s.key);
+
+  function irAAgenda() {
+    setView("agenda");
+    setPatientIdAbierto(null);
+  }
+
+  function abrirVista(v) {
+    setPatientIdAbierto(null);
+    setView(v);
+  }
+
+  return (
+    <Layout
+      view={view}
+      setView={abrirVista}
+      seccionesVisibles={seccionesVisibles}
+      onLogout={() => auth.signOut()}
+      config={cargandoConfig ? {} : config}
+      esColaborador={dataOwnerEstado.esColaborador}
+      oscuro={oscuro}
+      setOscuro={setOscuro}
+    >
+      {view === "agenda" && seccionesVisibles.includes("agenda") && <AgendaView />}
+      {view === "pacientes" && seccionesVisibles.includes("pacientes") && (
+        patientIdAbierto ? (
+          <PatientDetail patientId={patientIdAbierto} onVolver={() => setPatientIdAbierto(null)} config={config} />
+        ) : (
+          <PacientesView onAbrirPaciente={setPatientIdAbierto} />
+        )
+      )}
+      {view === "recetas" && seccionesVisibles.includes("recetas") && <RecetasView config={config} />}
+      {view === "examenes" && seccionesVisibles.includes("examenes") && <ExamenesView />}
+      {view === "config" && (
+        <ConfigView config={config} esColaborador={dataOwnerEstado.esColaborador} perfilColaborador={dataOwnerEstado.perfilColaborador} user={user} />
+      )}
+      {!seccionesVisibles.includes(view) && (
+        <EmptyState icon="🔒" title="No tienes acceso a esta sección" hint="Pídele al consultorio que te habilite esta sección desde Configuración." />
+      )}
+    </Layout>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body></html>

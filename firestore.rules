@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{ownerUid} {
+
+      // La entrada de un/a colaborador/a se crea por la propia persona en
+      // el momento de unirse con el código de invitación (todavía no
+      // aparece en la lista de colaboradores del consultorio, así que la
+      // regla general de más abajo no le daría permiso). Una vez creada,
+      // solo el/la dueño/a del consultorio puede editarla o borrarla; el
+      // propio colaborador solo puede leer su fila (para saber qué
+      // secciones tiene habilitadas).
+      match /colaboradores/{colabId} {
+        allow read: if request.auth != null && (request.auth.uid == ownerUid || request.auth.uid == colabId);
+        allow create: if request.auth != null && request.auth.uid == colabId;
+        allow update, delete: if request.auth != null && request.auth.uid == ownerUid;
+      }
+
+      // Todo lo demás bajo users/{ownerUid}/... (config, pacientes,
+      // consultas, recetas, exámenes, citas, meta…): el/la dueño/a de la
+      // cuenta, o cualquier colaborador/a ya aceptado en su equipo.
+      match /{document=**} {
+        allow read, write: if request.auth != null && (
+          request.auth.uid == ownerUid ||
+          exists(/databases/$(database)/documents/users/$(ownerUid)/colaboradores/$(request.auth.uid))
+        );
+      }
+    }
+
+    // Los códigos de invitación: se necesitan ANTES de iniciar sesión (para
+    // validar el código al unirse a un equipo), así que su lectura es
+    // pública — el código en sí es una cadena al azar difícil de adivinar,
+    // y conocer a quién pertenece no da acceso a ningún dato. Solo el
+    // propio dueño puede crear el suyo, y no se puede modificar ni borrar
+    // desde el cliente.
+    match /inviteCodes/{codigo} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+  }
+}
