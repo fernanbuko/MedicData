@@ -519,6 +519,68 @@ function Modal({ title, onClose, children, wide }) {
 }
 
 // -----------------------------------------------------------------------
+// Botón "atrás" del celular: como esta app no cambia de URL al navegar
+// (pestañas, ficha de un paciente, formularios, diálogos…), sin esto el
+// botón atrás no tiene nada que deshacer y cierra la app entera —
+// justamente el problema que arregla lo de aquí abajo.
+//
+// Cada pantalla/modal "cerrable" llama a usarNavegacionAtras(abierto,
+// cerrar): mientras esté abierta, empuja una entrada al historial del
+// navegador; si el botón atrás la consume (evento popstate), se llama a
+// cerrar() en vez de dejar que el navegador salga de la app; y si se
+// cierra por otro medio (un botón "Cancelar", guardar, etc.), consume esa
+// misma entrada para no dejar un "atrás" fantasma. Todas las pantallas
+// abiertas se llevan en una sola pila global, así que cerrar siempre pasa
+// de adentro hacia afuera (lo último que se abrió es lo primero que el
+// botón atrás cierra), sin importar cuántas cosas haya abiertas a la vez.
+// -----------------------------------------------------------------------
+const _pilaNavegacionAtras = [];
+let _idNavegacionAtras = 0;
+
+function usarNavegacionAtras(abierto, cerrar) {
+  const idRef = React.useRef(null);
+  const cerrarRef = React.useRef(cerrar);
+  cerrarRef.current = cerrar;
+
+  React.useEffect(() => {
+    if (abierto && idRef.current == null) {
+      const id = ++_idNavegacionAtras;
+      idRef.current = id;
+      _pilaNavegacionAtras.push({ id, cerrar: () => cerrarRef.current() });
+      window.history.pushState({ medidataNivel: id }, "");
+    }
+    return () => {
+      const id = idRef.current;
+      if (id == null) return;
+      idRef.current = null;
+      const i = _pilaNavegacionAtras.findIndex((x) => x.id === id);
+      if (i !== -1) _pilaNavegacionAtras.splice(i, 1);
+      // Si esta pantalla se cerró por otro medio (no por el botón atrás),
+      // la entrada que empujamos sigue siendo la actual del historial —
+      // hay que consumirla para no dejar un "atrás" fantasma.
+      if (window.history.state && window.history.state.medidataNivel === id) {
+        window.history.back();
+      }
+    };
+  }, [abierto]);
+}
+
+// Un único listener para toda la app, montado una vez en <App />.
+function usarEscuchaGlobalNavegacionAtras() {
+  React.useEffect(() => {
+    function onPopState() {
+      const tope = _pilaNavegacionAtras.pop();
+      if (tope) tope.cerrar();
+      // Si la pila está vacía, no queda nada por cerrar dentro de la app
+      // — ahí sí se deja que el navegador/la PWA haga lo suyo (minimizar
+      // o cerrar), que es lo esperado al llegar a la pantalla principal.
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+}
+
+// -----------------------------------------------------------------------
 // Reemplazo de confirm()/prompt() del navegador (que muestran la URL del
 // sitio, "fernanbuko.github.io dice…", y no se pueden ver bien) por un
 // diálogo propio de la app. Un solo componente montado una vez en la raíz
@@ -564,8 +626,6 @@ function GlobalDialogHost() {
     };
   }, []);
 
-  if (!estado) return null;
-
   function cerrar(resultado) {
     setEstado(null);
     if (_resolverDialogoGlobal) {
@@ -573,6 +633,10 @@ function GlobalDialogHost() {
       _resolverDialogoGlobal = null;
     }
   }
+
+  usarNavegacionAtras(!!estado, () => cerrar(estado && estado.tipo === "prompt" ? null : false));
+
+  if (!estado) return null;
 
   const esPrompt = estado.tipo === "prompt";
 
@@ -628,6 +692,7 @@ function AjustarFotoModal({ file, redondo, onCancelar, onListo }) {
   const [offset, setOffset] = React.useState({ x: 0, y: 0 });
   const [guardando, setGuardando] = React.useState(false);
   const arrastre = React.useRef(null);
+  usarNavegacionAtras(true, onCancelar);
 
   React.useEffect(() => {
     const url = URL.createObjectURL(file);
@@ -1075,6 +1140,7 @@ function useConfigConsultorio() {
 function NotificationBell() {
   const { items: notificaciones } = useCollection("notificaciones", { orderByField: "creadoEn", direction: "desc" });
   const [abierta, setAbierta] = React.useState(false);
+  usarNavegacionAtras(abierta, () => setAbierta(false));
   const ref = React.useRef(null);
 
   React.useEffect(() => {
@@ -1157,8 +1223,9 @@ function NotificationBell() {
   );
 }
 
-function Layout({ view, setView, seccionesVisibles, onLogout, config, esColaborador, esAdminApp, children, oscuro, setOscuro }) {
+function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdminApp, children }) {
   const [menuAbierto, setMenuAbierto] = React.useState(false);
+  usarNavegacionAtras(menuAbierto, () => setMenuAbierto(false));
   const tabs = TODAS_LAS_SECCIONES.filter((t) => seccionesVisibles.includes(t.key));
   const iconos = { inicio: "🏠", agenda: "🗓", pacientes: "🧑‍⚕️", recetas: "📋", examenes: "🧪", config: "⚙" };
 
@@ -1210,7 +1277,6 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
             </button>
           ))}
         </nav>
-        <button onClick={onLogout} className="text-sm text-muted hover:text-warn text-left px-3 py-2">Cerrar sesión</button>
       </aside>
 
       {/* Barra superior (celular) */}
@@ -1258,21 +1324,12 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
                 <span>{iconos[t.key]}</span>{t.label}
               </button>
             ))}
-            <button onClick={() => setOscuro(!oscuro)} className="px-3 py-2.5 text-sm text-left text-muted">
-              {oscuro ? "☀ Modo claro" : "🌙 Modo oscuro"}
-            </button>
-            <button onClick={onLogout} className="px-3 py-2.5 text-sm text-left text-warn mt-2">Cerrar sesión</button>
           </div>
         </div>
       )}
 
       <main className="flex-1 min-w-0 pb-20 md:pb-8">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-          <div className="hidden md:flex justify-end mb-2">
-            <button onClick={() => setOscuro(!oscuro)} className="text-xs text-muted hover:text-ink dark:hover:text-paper">
-              {oscuro ? "☀ Modo claro" : "🌙 Modo oscuro"}
-            </button>
-          </div>
           {esColaborador && (
             <div className="mb-4 text-xs px-3 py-1.5 rounded-full bg-accent/10 text-ink2 dark:text-accent inline-block">
               Colaborando en el consultorio de {config.nombreMedico || "—"}
@@ -1304,6 +1361,7 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
 // recetas y exámenes de cada persona.
 // -----------------------------------------------------------------------
 function PatientForm({ paciente, onClose, onSaved }) {
+  usarNavegacionAtras(true, onClose);
   const [data, setData] = React.useState(
     paciente || {
       nombre: "",
@@ -1522,6 +1580,7 @@ function imprimirFichaPaciente(paciente, consultas, recetas, examenes, config) {
 // heridas, resultados visuales, etc. Con visor a pantalla completa.
 // -----------------------------------------------------------------------
 function FotoForm({ paciente, onClose, onSaved }) {
+  usarNavegacionAtras(true, onClose);
   const [fecha, setFecha] = React.useState(hoyISO());
   const [nota, setNota] = React.useState("");
   const [url, setUrl] = React.useState("");
@@ -1591,6 +1650,7 @@ function FotoForm({ paciente, onClose, onSaved }) {
 }
 
 function GaleriaLightbox({ fotos, indiceInicial, onClose, onEliminar }) {
+  usarNavegacionAtras(true, onClose);
   const [indice, setIndice] = React.useState(indiceInicial);
   const foto = fotos[indice];
 
@@ -1768,6 +1828,7 @@ function PatientDetail({ patientId, onVolver, config }) {
 // examen físico, diagnóstico, plan y próximo control.
 // -----------------------------------------------------------------------
 function ConsultaForm({ paciente, citaId, onClose, onSaved }) {
+  usarNavegacionAtras(true, onClose);
   const [data, setData] = React.useState({
     fecha: hoyISO(),
     hora: new Date().toTimeString().slice(0, 5),
@@ -1903,6 +1964,7 @@ function medicamentoVacio() {
 }
 
 function RecetaForm({ paciente, onClose, onSaved }) {
+  usarNavegacionAtras(true, onClose);
   const [fecha, setFecha] = React.useState(hoyISO());
   const [diagnostico, setDiagnostico] = React.useState("");
   const [notas, setNotas] = React.useState("");
@@ -2139,6 +2201,7 @@ function RecetasView({ config }) {
 // un archivo adjunto (PDF o foto) guardado en Cloudinary.
 // -----------------------------------------------------------------------
 function ExamenForm({ paciente, onClose, onSaved }) {
+  usarNavegacionAtras(true, onClose);
   const [data, setData] = React.useState({
     fecha: hoyISO(),
     tipo: TIPOS_EXAMEN[0],
@@ -2323,6 +2386,7 @@ function estadoCitaInfo(key) {
 }
 
 function CitaForm({ fechaInicial, cita, onClose, onSaved }) {
+  usarNavegacionAtras(true, onClose);
   const { items: pacientes } = useCollection("pacientes", { orderByField: "nombre" });
   const [data, setData] = React.useState(
     cita || {
@@ -2678,7 +2742,7 @@ async function activarNotificaciones() {
   localStorage.setItem(CLAVE_PREFERENCIA_NOTIF, "1");
 }
 
-function ConfigView({ config, esColaborador, perfilColaborador, user }) {
+function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, setOscuro, onLogout }) {
   const [nombreConsultorio, setNombreConsultorio] = React.useState(config.nombreConsultorio || "");
   const [nombreMedico, setNombreMedico] = React.useState(config.nombreMedico || "");
   const [especialidad, setEspecialidad] = React.useState(config.especialidad || "");
@@ -2852,6 +2916,19 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
         <p className="text-sm text-muted mb-3">Recibe un aviso en el celular cuando falte poco para una cita.</p>
         <SecondaryButton onClick={onActivarNotif} disabled={activandoNotif}>{activandoNotif ? "Activando…" : "Activar notificaciones"}</SecondaryButton>
         {errorNotif && <p className="text-warn text-sm mt-2">{errorNotif}</p>}
+      </Card>
+
+      <Card className="mb-5">
+        <h2 className="font-semibold mb-3">Apariencia y sesión</h2>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm">{oscuro ? "Modo oscuro" : "Modo claro"}</span>
+          <SecondaryButton className="!px-3 !py-1.5 !text-xs" onClick={() => setOscuro(!oscuro)}>
+            {oscuro ? "☀ Cambiar a claro" : "🌙 Cambiar a oscuro"}
+          </SecondaryButton>
+        </div>
+        <div className="pt-3 border-t border-line dark:border-white/10">
+          <DangerLink onClick={onLogout}>Cerrar sesión</DangerLink>
+        </div>
       </Card>
 
       {(!firebaseReady || !cloudinaryReady) && (
@@ -3125,6 +3202,14 @@ function App() {
   const [view, setView] = React.useState("inicio");
   const [patientIdAbierto, setPatientIdAbierto] = React.useState(null);
 
+  usarEscuchaGlobalNavegacionAtras();
+  // Atrás desde cualquier pestaña vuelve a Inicio; atrás con la ficha de
+  // un paciente abierta la cierra primero (el orden de éstas importa: al
+  // salir de Inicio se empuja un nivel, y al abrir un paciente se empuja
+  // otro encima — por eso "atrás" cierra primero el paciente).
+  usarNavegacionAtras(view !== "inicio", () => { setPatientIdAbierto(null); setView("inicio"); });
+  usarNavegacionAtras(patientIdAbierto != null, () => setPatientIdAbierto(null));
+
   React.useEffect(() => {
     document.documentElement.classList.toggle("dark", oscuro);
     try {
@@ -3253,12 +3338,9 @@ function App() {
       view={view}
       setView={abrirVista}
       seccionesVisibles={seccionesVisibles}
-      onLogout={() => auth.signOut()}
       config={cargandoConfig ? {} : config}
       esColaborador={dataOwnerEstado.esColaborador}
       esAdminApp={esAdminApp}
-      oscuro={oscuro}
-      setOscuro={setOscuro}
     >
       {view === "inicio" && (
         <InicioView config={config} setView={abrirVista} onAbrirPaciente={setPatientIdAbierto} />
@@ -3274,7 +3356,15 @@ function App() {
       {view === "recetas" && seccionesVisibles.includes("recetas") && <RecetasView config={config} />}
       {view === "examenes" && seccionesVisibles.includes("examenes") && <ExamenesView />}
       {view === "config" && (
-        <ConfigView config={config} esColaborador={dataOwnerEstado.esColaborador} perfilColaborador={dataOwnerEstado.perfilColaborador} user={user} />
+        <ConfigView
+          config={config}
+          esColaborador={dataOwnerEstado.esColaborador}
+          perfilColaborador={dataOwnerEstado.perfilColaborador}
+          user={user}
+          oscuro={oscuro}
+          setOscuro={setOscuro}
+          onLogout={() => auth.signOut()}
+        />
       )}
       {view === "panel" && esAdminApp && <PanelAdminView />}
       {!seccionesVisibles.includes(view) && view !== "panel" && (
