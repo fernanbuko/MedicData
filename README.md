@@ -62,6 +62,11 @@ fotos/archivos en Cloudinary.
 4. En `index.html`, busca `CLOUDINARY_CLOUD_NAME` y
    `CLOUDINARY_UPLOAD_PRESET`, y reemplaza los valores de ejemplo.
 
+Los archivos se suben organizados en carpetas, no todos sueltos en la raíz:
+`medicdata/{tu cuenta}/logo`, `.../perfil`, y `.../pacientes/{id}_{nombre}/`
+(con una subcarpeta `examenes` para los archivos adjuntos de cada paciente).
+Puedes navegar así por la Media Library de Cloudinary sin perderte.
+
 Si no configuras Cloudinary, la app funciona igual, solo que no podrás
 subir fotos de pacientes ni archivos adjuntos de exámenes.
 

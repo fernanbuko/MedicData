@@ -186,8 +186,8 @@ const firebaseReady = firebaseConfig.apiKey && firebaseConfig.apiKey !== "TU_API
    de Cloudinary (cloudinary.com → Dashboard → "Cloud name", y un
    "Upload preset" que hayas creado en modo "Unsigned").
 ----------------------------------------------------------*/
-const CLOUDINARY_CLOUD_NAME = "TU_CLOUD_NAME";
-const CLOUDINARY_UPLOAD_PRESET = "TU_UPLOAD_PRESET";
+const CLOUDINARY_CLOUD_NAME = "zcuh5bjn";
+const CLOUDINARY_UPLOAD_PRESET = "MedicData";
 const cloudinaryReady = CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME" && CLOUDINARY_UPLOAD_PRESET !== "TU_UPLOAD_PRESET";
 
 let firebaseApp = null;
@@ -367,14 +367,35 @@ async function borrarDoc(name, id) {
 }
 
 // -----------------------------------------------------------------------
-// Cloudinary: subida de fotos y archivos (sin backend propio)
+// Cloudinary: subida de fotos y archivos (sin backend propio), organizada
+// en carpetas por consultorio y por paciente — igual que en VetData — para
+// que la librería de Cloudinary quede ordenada y no todo junto en la raíz.
 // -----------------------------------------------------------------------
-async function subirACloudinary(file) {
+function sanitizarNombreCarpeta(nombre) {
+  return (nombre || "sin_nombre")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "") // quita tildes
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || "sin_nombre";
+}
+
+function carpetaConsultorio() {
+  const uid = window.__dataOwnerUid || "sin_cuenta";
+  return `medicdata/${uid}`;
+}
+
+function carpetaPaciente(patientFolderId, nombrePaciente) {
+  return `${carpetaConsultorio()}/pacientes/${patientFolderId}_${sanitizarNombreCarpeta(nombrePaciente)}`;
+}
+
+async function subirACloudinary(file, folder) {
   if (!cloudinaryReady) throw new Error("Cloudinary no está configurado todavía.");
   const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
   const fd = new FormData();
   fd.append("file", file);
   fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  if (folder) fd.append("folder", folder);
   const res = await fetch(url, { method: "POST", body: fd });
   if (!res.ok) throw new Error("No se pudo subir el archivo.");
   const data = await res.json();
@@ -1201,13 +1222,17 @@ function PatientForm({ paciente, onClose, onSaved }) {
   const [guardando, setGuardando] = React.useState(false);
   const [error, setError] = React.useState("");
   const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
+  // Id estable para la carpeta de Cloudinary de este paciente, aunque
+  // todavía no se haya guardado (y por lo tanto no tenga id real en
+  // Firestore) la primera vez que se sube su foto.
+  const carpetaId = React.useRef(paciente?.id || uid()).current;
 
   async function subirFoto(e) {
     const file = e.target.files[0];
     if (!file) return;
     setSubiendoFoto(true);
     try {
-      const url = await subirACloudinary(file);
+      const url = await subirACloudinary(file, carpetaPaciente(carpetaId, data.nombre));
       setData((d) => ({ ...d, foto: url }));
     } catch (err) {
       setError(err.message);
@@ -1850,7 +1875,7 @@ function ExamenForm({ paciente, onClose, onSaved }) {
     if (!file) return;
     setSubiendo(true);
     try {
-      const url = await subirACloudinary(file);
+      const url = await subirACloudinary(file, `${carpetaPaciente(paciente.id, paciente.nombre)}/examenes`);
       setData((d) => ({ ...d, archivoUrl: url }));
     } catch (err) {
       setError(err.message);
@@ -2417,7 +2442,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     if (!file) return;
     setSubiendoLogo(true);
     try {
-      const url = await subirACloudinary(file);
+      const url = await subirACloudinary(file, `${carpetaConsultorio()}/logo`);
       setLogoUrl(url);
       await withTimeout(
         db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
@@ -2436,7 +2461,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     if (!file) return;
     setSubiendoFotoMedico(true);
     try {
-      const url = await subirACloudinary(file);
+      const url = await subirACloudinary(file, `${carpetaConsultorio()}/perfil`);
       setFotoMedico(url);
       await withTimeout(
         db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
