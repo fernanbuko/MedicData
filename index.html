@@ -194,10 +194,12 @@ let firebaseApp = null;
 let auth = null;
 let db = null;
 let messaging = null;
+let googleProvider = null;
 if (firebaseReady) {
   firebaseApp = firebase.initializeApp(firebaseConfig);
   auth = firebase.auth();
   db = firebase.firestore();
+  googleProvider = new firebase.auth.GoogleAuthProvider();
   try {
     messaging = firebase.messaging.isSupported() ? firebase.messaging() : null;
   } catch (e) {
@@ -517,6 +519,29 @@ function LoginScreen() {
   const [nombreColaborador, setNombreColaborador] = React.useState("");
   const [error, setError] = React.useState("");
   const [cargando, setCargando] = React.useState(false);
+  const [cargandoGoogle, setCargandoGoogle] = React.useState(false);
+  const [errorGoogle, setErrorGoogle] = React.useState("");
+
+  async function iniciarSesionConGoogle() {
+    setErrorGoogle("");
+    setCargandoGoogle(true);
+    try {
+      // popup en vez de redirect: más simple y no depende de que el
+      // navegador conserve el estado entre la ida y la vuelta.
+      await withTimeout(auth.signInWithPopup(googleProvider), 30000);
+      // Si esta cuenta es nueva (nunca creó ni se unió a un consultorio),
+      // App muestra la pantalla de "Completar perfil" automáticamente.
+    } catch (err) {
+      if (err && err.code === "auth/popup-closed-by-user") {
+        // La persona cerró la ventana ella misma: no es un error real.
+      } else if (err && err.code === "auth/popup-blocked") {
+        setErrorGoogle("El navegador bloqueó la ventana de Google. Revisa que no esté bloqueando ventanas emergentes para este sitio.");
+      } else {
+        setErrorGoogle(traducirErrorAuth(err));
+      }
+    }
+    setCargandoGoogle(false);
+  }
 
   async function iniciarSesion(e) {
     e.preventDefault();
@@ -608,6 +633,27 @@ function LoginScreen() {
           <p className="text-muted text-sm mt-1">Historia clínica, recetas, exámenes y agenda</p>
         </div>
 
+        <SecondaryButton
+          onClick={iniciarSesionConGoogle}
+          disabled={cargandoGoogle || !firebaseReady}
+          className="w-full justify-center mb-4 !bg-white dark:!bg-white/5"
+        >
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z" />
+            <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.4 18.9 12 24 12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 16 3 9 7.6 6.3 14.7z" />
+            <path fill="#4CAF50" d="M24 45c5.4 0 10.3-2.1 14-5.5l-6.5-5.5c-2 1.5-4.6 2.5-7.5 2.5-5.2 0-9.6-3.3-11.3-8l-6.5 5C9 40.4 16 45 24 45z" />
+            <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.5l6.5 5.5C41.4 35.6 45 30.3 45 24c0-1.4-.1-2.7-.4-3.5z" />
+          </svg>
+          {cargandoGoogle ? "Conectando…" : "Continuar con Google"}
+        </SecondaryButton>
+        {errorGoogle && <p className="text-warn text-sm mb-3 text-center">{errorGoogle}</p>}
+
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex-1 h-px bg-line dark:bg-white/10" />
+          <span className="text-xs text-faint">o con correo y contraseña</span>
+          <div className="flex-1 h-px bg-line dark:bg-white/10" />
+        </div>
+
         <div className="flex gap-1 mb-5 bg-white/60 dark:bg-white/5 rounded-lg p-1 border border-line dark:border-white/10">
           {[
             ["login", "Iniciar sesión"],
@@ -695,11 +741,17 @@ function traducirErrorAuth(err) {
 // mostrar: si esta cuenta es dueña de un consultorio, son los suyos; si es
 // colaborador/a, son los de la persona que la invitó.
 function useDataOwner(user) {
-  const [estado, setEstado] = React.useState({ cargando: true, ownerUid: null, esColaborador: false, perfilColaborador: null });
+  const [estado, setEstado] = React.useState({
+    cargando: true,
+    ownerUid: null,
+    esColaborador: false,
+    perfilColaborador: null,
+    necesitaOnboarding: false,
+  });
 
   React.useEffect(() => {
     if (!user) {
-      setEstado({ cargando: false, ownerUid: null, esColaborador: false, perfilColaborador: null });
+      setEstado({ cargando: false, ownerUid: null, esColaborador: false, perfilColaborador: null, necesitaOnboarding: false });
       window.__dataOwnerUid = null;
       return;
     }
@@ -711,21 +763,163 @@ function useDataOwner(user) {
         if (metaDoc.exists && metaDoc.data().duenoUid) {
           const ownerUid = metaDoc.data().duenoUid;
           window.__dataOwnerUid = ownerUid;
-          setEstado({ cargando: false, ownerUid, esColaborador: true, perfilColaborador: metaDoc.data() });
-        } else {
-          window.__dataOwnerUid = user.uid;
-          setEstado({ cargando: false, ownerUid: user.uid, esColaborador: false, perfilColaborador: null });
+          setEstado({ cargando: false, ownerUid, esColaborador: true, perfilColaborador: metaDoc.data(), necesitaOnboarding: false });
+          return;
         }
+        // Ni "meta/perfil" (no es colaborador/a) ni, si llegamos aquí,
+        // sabemos todavía si ya tiene su propio consultorio creado. Esto
+        // solo puede pasar recién llegando con Google (con correo y
+        // contraseña, "config" se crea en el mismo paso del registro) —
+        // así que revisamos si ya existe su "config" antes de asumir que
+        // es dueño/a de algo.
+        const configDoc = await withTimeout(db.collection("users").doc(user.uid).collection("data").doc("config").get());
+        if (cancelado) return;
+        if (!configDoc.exists) {
+          window.__dataOwnerUid = null;
+          setEstado({ cargando: false, ownerUid: null, esColaborador: false, perfilColaborador: null, necesitaOnboarding: true });
+          return;
+        }
+        window.__dataOwnerUid = user.uid;
+        setEstado({ cargando: false, ownerUid: user.uid, esColaborador: false, perfilColaborador: null, necesitaOnboarding: false });
       } catch (e) {
         console.error("Error resolviendo dueño de los datos:", e);
         window.__dataOwnerUid = user.uid;
-        setEstado({ cargando: false, ownerUid: user.uid, esColaborador: false, perfilColaborador: null });
+        setEstado({ cargando: false, ownerUid: user.uid, esColaborador: false, perfilColaborador: null, necesitaOnboarding: false });
       }
     })();
     return () => { cancelado = true; };
   }, [user && user.uid]);
 
   return estado;
+}
+
+// Pantalla que ve, una sola vez, quien entra por primera vez con Google:
+// como no hay un formulario previo al inicio de sesión (a diferencia de
+// correo/contraseña), aquí se le pregunta si va a crear su propio
+// consultorio o si se está uniendo a uno con un código de invitación.
+function OnboardingGoogle({ user }) {
+  const [modo, setModo] = React.useState(null); // null | crear | colaborador
+  const [nombreConsultorio, setNombreConsultorio] = React.useState("");
+  const [nombreMedico, setNombreMedico] = React.useState(user.displayName || "");
+  const [codigoInvitacion, setCodigoInvitacion] = React.useState("");
+  const [nombreColaborador, setNombreColaborador] = React.useState(user.displayName || "");
+  const [guardando, setGuardando] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  async function crearConsultorio(e) {
+    e.preventDefault();
+    if (!nombreConsultorio.trim() || !nombreMedico.trim()) {
+      setError("Completa el nombre del consultorio y tu nombre.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      const codigo = generarCodigoInvitacion();
+      await withTimeout(
+        db.collection("users").doc(user.uid).collection("data").doc("config").set({
+          nombreConsultorio: nombreConsultorio.trim(),
+          nombreMedico: nombreMedico.trim(),
+          especialidad: "",
+          telefono: "",
+          direccion: "",
+          inviteCode: codigo,
+        })
+      );
+      await withTimeout(db.collection("inviteCodes").doc(codigo).set({ ownerUid: user.uid }));
+      // El listener de onAuthStateChanged/useDataOwner recoge el cambio
+      // solo; no hace falta recargar la página.
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  async function unirseAEquipo(e) {
+    e.preventDefault();
+    const codigo = codigoInvitacion.trim().toUpperCase();
+    if (!codigo || !nombreColaborador.trim()) {
+      setError("Completa el código de invitación y tu nombre.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      const invDoc = await withTimeout(db.collection("inviteCodes").doc(codigo).get());
+      if (!invDoc.exists) {
+        setError("Ese código de invitación no existe. Pídele al consultorio que te lo confirme.");
+        setGuardando(false);
+        return;
+      }
+      const ownerUid = invDoc.data().ownerUid;
+      await withTimeout(
+        db.collection("users").doc(user.uid).collection("meta").doc("perfil").set({
+          duenoUid: ownerUid,
+          nombre: nombreColaborador.trim(),
+          email: user.email || "",
+        })
+      );
+      await withTimeout(
+        db.collection("users").doc(ownerUid).collection("colaboradores").doc(user.uid).set({
+          nombre: nombreColaborador.trim(),
+          email: user.email || "",
+          secciones: ["agenda", "pacientes"],
+          creadoEn: firebase.firestore.FieldValue.serverTimestamp(),
+        })
+      );
+    } catch (err) {
+      setError(err.message);
+    }
+    setGuardando(false);
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-display font-semibold">¡Hola, {user.displayName || user.email}!</h1>
+          <p className="text-muted text-sm mt-1">Es la primera vez que entras. ¿Cómo vas a usar MediData?</p>
+        </div>
+
+        {!modo && (
+          <div className="flex flex-col gap-3">
+            <PrimaryButton onClick={() => setModo("crear")} className="w-full justify-center">Voy a crear mi consultorio</PrimaryButton>
+            <SecondaryButton onClick={() => setModo("colaborador")} className="w-full justify-center">Me invitaron con un código</SecondaryButton>
+          </div>
+        )}
+
+        {modo === "crear" && (
+          <Card>
+            <form onSubmit={crearConsultorio}>
+              <Field label="Nombre del consultorio"><TextInput required value={nombreConsultorio} onChange={(e) => setNombreConsultorio(e.target.value)} placeholder="Ej. Consultorio Dr. Pérez" /></Field>
+              <Field label="Tu nombre"><TextInput required value={nombreMedico} onChange={(e) => setNombreMedico(e.target.value)} /></Field>
+              {error && <p className="text-warn text-sm mb-3">{error}</p>}
+              <div className="flex gap-2 justify-end">
+                <SecondaryButton onClick={() => { setModo(null); setError(""); }}>Atrás</SecondaryButton>
+                <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Creando…" : "Crear mi consultorio"}</PrimaryButton>
+              </div>
+            </form>
+          </Card>
+        )}
+
+        {modo === "colaborador" && (
+          <Card>
+            <form onSubmit={unirseAEquipo}>
+              <Field label="Código de invitación"><TextInput required value={codigoInvitacion} onChange={(e) => setCodigoInvitacion(e.target.value.toUpperCase())} placeholder="Ej. AB3D9KX" /></Field>
+              <Field label="Tu nombre"><TextInput required value={nombreColaborador} onChange={(e) => setNombreColaborador(e.target.value)} /></Field>
+              {error && <p className="text-warn text-sm mb-3">{error}</p>}
+              <div className="flex gap-2 justify-end">
+                <SecondaryButton onClick={() => { setModo(null); setError(""); }}>Atrás</SecondaryButton>
+                <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Uniéndome…" : "Unirme al equipo"}</PrimaryButton>
+              </div>
+            </form>
+          </Card>
+        )}
+
+        <button onClick={() => auth.signOut()} className="text-sm text-muted hover:text-warn mt-6 mx-auto block">Cerrar sesión</button>
+      </div>
+    </div>
+  );
 }
 // -----------------------------------------------------------------------
 // Layout: navegación (barra lateral en escritorio, barra inferior en
@@ -2191,6 +2385,7 @@ function App() {
     return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando MediData…" /></div>;
   }
   if (!user) return <LoginScreen />;
+  if (dataOwnerEstado.necesitaOnboarding) return <OnboardingGoogle user={user} />;
   if (dataOwnerEstado.esColaborador && colaboradorSecciones === null) {
     return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando tu equipo…" /></div>;
   }
