@@ -1,4 +1,8 @@
-const CACHE_NAME = "medidata-v1";
+// Sube este número cada vez que cambien los archivos externos guardados
+// (ASSETS_EXTERNOS) o la estrategia de caché — así los celulares que ya
+// tenían la app instalada descartan cualquier copia vieja o dañada en
+// lugar de seguir usándola para siempre.
+const CACHE_NAME = "medidata-v2";
 
 // Los scripts de Firebase y las librerías de React/Babel/Tailwind se cargan
 // desde CDNs externos, no desde este mismo sitio — por eso hay que guardarlos
@@ -37,23 +41,39 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Con una red del celular inestable (torres débiles, proveedores que a
+// veces devuelven una página de aviso en vez del archivo pedido), guardar
+// "lo primero que llegue" puede dejar guardada una respuesta rota para
+// siempre — por eso aquí se intenta SIEMPRE la red primero, y solo se usa
+// lo guardado si la red falla o tarda demasiado (offline real). Además, un
+// script guardado nunca se reemplaza por algo que no sea JavaScript de
+// verdad: evita que una página de error HTML quede guardada con el nombre
+// de un archivo .js.
+function pareceJavaScriptValido(res, req) {
+  if (!res || res.status !== 200) return false;
+  const tipo = res.headers.get("content-type") || "";
+  if (req.url.endsWith(".js") && tipo.includes("text/html")) return false;
+  return true;
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.status === 200) {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          }
+    Promise.race([
+      fetch(req),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("red lenta")), 8000)),
+    ])
+      .then((res) => {
+        if (pareceJavaScriptValido(res, req)) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+        }
+        return caches.match(req).then((cached) => cached || res);
+      })
+      .catch(() => caches.match(req))
   );
 });
 
