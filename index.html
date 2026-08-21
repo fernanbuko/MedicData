@@ -518,6 +518,92 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
+// -----------------------------------------------------------------------
+// Reemplazo de confirm()/prompt() del navegador (que muestran la URL del
+// sitio, "fernanbuko.github.io dice…", y no se pueden ver bien) por un
+// diálogo propio de la app. Un solo componente montado una vez en la raíz
+// (ver <GlobalDialogHost /> en App), y dos funciones que cualquier parte
+// del código puede llamar como si fueran confirm()/prompt(), pero
+// asíncronas: `if (await pedirConfirmacion("¿Seguro?")) { ... }`.
+// -----------------------------------------------------------------------
+let _resolverDialogoGlobal = null;
+
+function pedirConfirmacion(mensaje, opciones = {}) {
+  return new Promise((resolve) => {
+    _resolverDialogoGlobal = resolve;
+    if (window.__mostrarDialogoGlobal) {
+      window.__mostrarDialogoGlobal({ tipo: "confirm", mensaje, ...opciones });
+    } else {
+      resolve(confirm(mensaje));
+    }
+  });
+}
+
+function pedirTexto(mensaje, opciones = {}) {
+  return new Promise((resolve) => {
+    _resolverDialogoGlobal = resolve;
+    if (window.__mostrarDialogoGlobal) {
+      window.__mostrarDialogoGlobal({ tipo: "prompt", mensaje, ...opciones });
+    } else {
+      resolve(prompt(mensaje));
+    }
+  });
+}
+
+function GlobalDialogHost() {
+  const [estado, setEstado] = React.useState(null);
+  const [valorTexto, setValorTexto] = React.useState("");
+
+  React.useEffect(() => {
+    window.__mostrarDialogoGlobal = (config) => {
+      setValorTexto(config.valorInicial || "");
+      setEstado(config);
+    };
+    return () => {
+      window.__mostrarDialogoGlobal = null;
+    };
+  }, []);
+
+  if (!estado) return null;
+
+  function cerrar(resultado) {
+    setEstado(null);
+    if (_resolverDialogoGlobal) {
+      _resolverDialogoGlobal(resultado);
+      _resolverDialogoGlobal = null;
+    }
+  }
+
+  const esPrompt = estado.tipo === "prompt";
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => cerrar(esPrompt ? null : false)}>
+      <div className="bg-card dark:bg-[#0F1B2C] rounded-xl shadow-lg w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <p className="text-sm whitespace-pre-wrap">{estado.mensaje}</p>
+        {esPrompt && (
+          <TextInput
+            autoFocus
+            className="mt-3"
+            value={valorTexto}
+            onChange={(e) => setValorTexto(e.target.value)}
+            placeholder={estado.placeholder || ""}
+            onKeyDown={(e) => e.key === "Enter" && cerrar(valorTexto)}
+          />
+        )}
+        <div className="flex gap-2 justify-end mt-4">
+          <SecondaryButton onClick={() => cerrar(esPrompt ? null : false)}>{estado.textoCancelar || "Cancelar"}</SecondaryButton>
+          <PrimaryButton
+            className={estado.peligro ? "!bg-warn dark:!bg-warn" : ""}
+            onClick={() => cerrar(esPrompt ? valorTexto : true)}
+          >
+            {estado.textoConfirmar || "Aceptar"}
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ icon, title, hint }) {
   return (
     <div className="text-center py-16 text-muted">
@@ -1570,7 +1656,7 @@ function FotosDePaciente({ paciente, fotos }) {
   const [indiceAbierto, setIndiceAbierto] = React.useState(null);
 
   async function eliminarFoto(foto) {
-    if (!confirm("¿Eliminar esta foto? No se puede deshacer.")) return;
+    if (!(await pedirConfirmacion("¿Eliminar esta foto? No se puede deshacer.", { textoConfirmar: "Eliminar", peligro: true }))) return;
     await borrarDoc("fotos", foto.id);
     setIndiceAbierto(null);
   }
@@ -1625,9 +1711,11 @@ function PatientDetail({ patientId, onVolver, config }) {
   ];
 
   async function eliminarPaciente() {
-    if (!confirm(`¿Eliminar a ${paciente.nombre}? Se borra su ficha; las consultas, recetas y exámenes que ya tiene guardados quedan en el sistema pero ya no se van a poder ver desde su ficha. Esta acción no se puede deshacer.`)) {
-      return;
-    }
+    const confirmado = await pedirConfirmacion(
+      `¿Eliminar a ${paciente.nombre}? Se borra su ficha; las consultas, recetas y exámenes que ya tiene guardados quedan en el sistema pero ya no se van a poder ver desde su ficha. Esta acción no se puede deshacer.`,
+      { textoConfirmar: "Eliminar", peligro: true }
+    );
+    if (!confirmado) return;
     setEliminando(true);
     try {
       await borrarDoc("pacientes", paciente.id);
@@ -2296,7 +2384,7 @@ function CitaForm({ fechaInicial, cita, onClose, onSaved }) {
   }
 
   async function eliminar() {
-    if (!confirm("¿Eliminar esta cita?")) return;
+    if (!(await pedirConfirmacion("¿Eliminar esta cita?", { textoConfirmar: "Eliminar", peligro: true }))) return;
     setGuardando(true);
     try {
       await borrarDoc("citas", cita.id);
@@ -2810,7 +2898,7 @@ function ColaboradoresLista() {
   }
 
   async function quitarColaborador(colabId) {
-    if (!confirm("¿Quitar a esta persona del equipo? Ya no podrá ver los datos del consultorio.")) return;
+    if (!(await pedirConfirmacion("¿Quitar a esta persona del equipo? Ya no podrá ver los datos del consultorio.", { textoConfirmar: "Quitar", peligro: true }))) return;
     await withTimeout(db.collection("users").doc(window.__dataOwnerUid).collection("colaboradores").doc(colabId).delete());
   }
 
@@ -2918,10 +3006,15 @@ function PanelAdminView() {
 
   async function alternarBloqueo(cuenta) {
     if (cuenta.bloqueada) {
-      if (!confirm(`¿Desbloquear "${cuenta.nombreConsultorio}"? Va a poder volver a entrar a MedicData.`)) return;
+      const confirmado = await pedirConfirmacion(`¿Desbloquear "${cuenta.nombreConsultorio}"? Va a poder volver a entrar a MedicData.`, { textoConfirmar: "Desbloquear" });
+      if (!confirmado) return;
       await db.collection("cuentasRegistradas").doc(cuenta.id).set({ bloqueada: false, motivoBloqueo: "" }, { merge: true });
     } else {
-      const motivo = prompt(`¿Por qué vas a bloquear "${cuenta.nombreConsultorio}"? (se le va a mostrar este motivo)`);
+      const motivo = await pedirTexto(`¿Por qué vas a bloquear "${cuenta.nombreConsultorio}"? (se le va a mostrar este motivo)`, {
+        textoConfirmar: "Bloquear",
+        peligro: true,
+        placeholder: "Motivo",
+      });
       if (motivo === null) return;
       await db.collection("cuentasRegistradas").doc(cuenta.id).set({ bloqueada: true, motivoBloqueo: motivo || "" }, { merge: true });
     }
@@ -3101,6 +3194,8 @@ function App() {
   }
 
   return (
+    <>
+    <GlobalDialogHost />
     <Layout
       view={view}
       setView={abrirVista}
@@ -3133,6 +3228,7 @@ function App() {
         <EmptyState icon="🔒" title="No tienes acceso a esta sección" hint="Pídele al consultorio que te habilite esta sección desde Configuración." />
       )}
     </Layout>
+    </>
   );
 }
 
