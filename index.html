@@ -1231,37 +1231,18 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
     <div className="min-h-screen flex flex-col md:flex-row">
       {/* Barra lateral (escritorio) */}
       <aside className="hidden md:flex md:flex-col md:w-56 md:shrink-0 border-r border-line dark:border-white/10 bg-white/60 dark:bg-white/5 px-3 py-5">
-        <div className="flex items-center gap-1 mb-6">
-          <button
-            onClick={() => setView("inicio")}
-            className="flex-1 min-w-0 flex items-center gap-2 px-2 text-left rounded-lg hover:bg-white dark:hover:bg-white/10 py-1.5 -mx-0.5"
-            title="Ir a Inicio"
-          >
-            {config.logoUrl ? (
-              <img src={config.logoUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" />
-            ) : (
-              <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display shrink-0">+</div>
-            )}
-            <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MedicData"}</span>
-          </button>
-          <NotificationBell />
-          {esAdminApp && (
-            <button
-              onClick={() => setView("panel")}
-              title="Panel de administración"
-              className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${view === "panel" ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "hover:bg-line dark:hover:bg-white/10"}`}
-            >
-              🛠
-            </button>
+        <button
+          onClick={() => setView("inicio")}
+          className="flex items-center gap-2 px-2 mb-6 text-left rounded-lg hover:bg-white dark:hover:bg-white/10 py-1.5 -mx-0.5"
+          title="Ir a Inicio"
+        >
+          {config.logoUrl ? (
+            <img src={config.logoUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display shrink-0">+</div>
           )}
-          <button onClick={() => setView("config")} title="Mi perfil" className="shrink-0">
-            {config.fotoMedico ? (
-              <img src={config.fotoMedico} className="w-8 h-8 rounded-full object-cover" />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
-            )}
-          </button>
-        </div>
+          <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MedicData"}</span>
+        </button>
         <nav className="flex-1 flex flex-col gap-1">
           {tabs.map((t) => (
             <button
@@ -1309,6 +1290,25 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
       </header>
 
       <main className="flex-1 min-w-0 pb-20 md:pb-8">
+        <div className="hidden md:flex items-center justify-end gap-2 px-4 sm:px-6 pt-4">
+          <NotificationBell />
+          {esAdminApp && (
+            <button
+              onClick={() => setView("panel")}
+              title="Panel de administración"
+              className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${view === "panel" ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "hover:bg-line dark:hover:bg-white/10"}`}
+            >
+              🛠
+            </button>
+          )}
+          <button onClick={() => setView("config")} title="Mi perfil" className="shrink-0">
+            {config.fotoMedico ? (
+              <img src={config.fotoMedico} className="w-8 h-8 rounded-full object-cover" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
+            )}
+          </button>
+        </div>
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
           {esColaborador && (
             <div className="mb-4 text-xs px-3 py-1.5 rounded-full bg-accent/10 text-ink2 dark:text-accent inline-block">
