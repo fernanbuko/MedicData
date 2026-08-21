@@ -740,7 +740,7 @@ function traducirErrorAuth(err) {
 // Resuelve, después de iniciar sesión, de QUIÉN son los datos que hay que
 // mostrar: si esta cuenta es dueña de un consultorio, son los suyos; si es
 // colaborador/a, son los de la persona que la invitó.
-function useDataOwner(user) {
+function useDataOwner(user, versionOnboarding) {
   const [estado, setEstado] = React.useState({
     cargando: true,
     ownerUid: null,
@@ -788,7 +788,7 @@ function useDataOwner(user) {
       }
     })();
     return () => { cancelado = true; };
-  }, [user && user.uid]);
+  }, [user && user.uid, versionOnboarding]);
 
   return estado;
 }
@@ -797,7 +797,7 @@ function useDataOwner(user) {
 // como no hay un formulario previo al inicio de sesión (a diferencia de
 // correo/contraseña), aquí se le pregunta si va a crear su propio
 // consultorio o si se está uniendo a uno con un código de invitación.
-function OnboardingGoogle({ user }) {
+function OnboardingGoogle({ user, onListo }) {
   const [modo, setModo] = React.useState(null); // null | crear | colaborador
   const [nombreConsultorio, setNombreConsultorio] = React.useState("");
   const [nombreMedico, setNombreMedico] = React.useState(user.displayName || "");
@@ -827,8 +827,7 @@ function OnboardingGoogle({ user }) {
         })
       );
       await withTimeout(db.collection("inviteCodes").doc(codigo).set({ ownerUid: user.uid }));
-      // El listener de onAuthStateChanged/useDataOwner recoge el cambio
-      // solo; no hace falta recargar la página.
+      onListo();
     } catch (err) {
       setError(err.message);
     }
@@ -867,6 +866,7 @@ function OnboardingGoogle({ user }) {
           creadoEn: firebase.firestore.FieldValue.serverTimestamp(),
         })
       );
+      onListo();
     } catch (err) {
       setError(err.message);
     }
@@ -2362,7 +2362,8 @@ function App() {
     }
   }, []);
 
-  const dataOwnerEstado = useDataOwner(user);
+  const [versionOnboarding, setVersionOnboarding] = React.useState(0);
+  const dataOwnerEstado = useDataOwner(user, versionOnboarding);
   const { config, loading: cargandoConfig } = useConfigConsultorio();
 
   const [colaboradorSecciones, setColaboradorSecciones] = React.useState(null);
@@ -2385,7 +2386,9 @@ function App() {
     return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando MediData…" /></div>;
   }
   if (!user) return <LoginScreen />;
-  if (dataOwnerEstado.necesitaOnboarding) return <OnboardingGoogle user={user} />;
+  if (dataOwnerEstado.necesitaOnboarding) {
+    return <OnboardingGoogle user={user} onListo={() => setVersionOnboarding((n) => n + 1)} />;
+  }
   if (dataOwnerEstado.esColaborador && colaboradorSecciones === null) {
     return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando tu equipo…" /></div>;
   }
