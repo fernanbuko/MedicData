@@ -1773,12 +1773,12 @@ function PatientDetail({ patientId, onVolver, config }) {
         </div>
       </Card>
 
-      <div className="flex mb-4 border-b border-line dark:border-white/10 overflow-x-auto">
+      <div className="flex mb-4 border-b border-line dark:border-white/10">
         {tabs.map(([k, label, icono]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap px-2 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
+            className={`flex-1 min-w-0 flex items-center justify-center gap-1 whitespace-nowrap px-1 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
               tab === k ? "border-ink dark:border-accent text-ink dark:text-accent" : "border-transparent text-muted hover:text-ink dark:hover:text-paper"
             }`}
           >
