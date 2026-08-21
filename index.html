@@ -614,6 +614,124 @@ function EmptyState({ icon, title, hint }) {
   );
 }
 
+// -----------------------------------------------------------------------
+// Editor de foto: arrastrar para mover, control para hacer zoom, antes de
+// subir logo/foto de perfil/foto de paciente — para poder encuadrarla bien
+// en vez de subir la foto tal cual salió de la cámara.
+// -----------------------------------------------------------------------
+const AJUSTAR_FOTO_MARCO = 260;
+const AJUSTAR_FOTO_SALIDA = 480;
+
+function AjustarFotoModal({ file, redondo, onCancelar, onListo }) {
+  const [imagen, setImagen] = React.useState(null);
+  const [zoom, setZoom] = React.useState(1);
+  const [offset, setOffset] = React.useState({ x: 0, y: 0 });
+  const [guardando, setGuardando] = React.useState(false);
+  const arrastre = React.useRef(null);
+
+  React.useEffect(() => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => setImagen(img);
+    img.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  if (!imagen) {
+    return (
+      <Modal title="Ajustar foto" onClose={onCancelar}>
+        <Spinner />
+      </Modal>
+    );
+  }
+
+  const marco = AJUSTAR_FOTO_MARCO;
+  const escalaBase = Math.max(marco / imagen.width, marco / imagen.height);
+  const escala = escalaBase * zoom;
+  const anchoImg = imagen.width * escala;
+  const altoImg = imagen.height * escala;
+  const limiteX = Math.max(0, (anchoImg - marco) / 2);
+  const limiteY = Math.max(0, (altoImg - marco) / 2);
+  const offX = Math.min(limiteX, Math.max(-limiteX, offset.x));
+  const offY = Math.min(limiteY, Math.max(-limiteY, offset.y));
+  const left = (marco - anchoImg) / 2 + offX;
+  const top = (marco - altoImg) / 2 + offY;
+
+  function onPointerDown(e) {
+    arrastre.current = { startX: e.clientX, startY: e.clientY, origX: offX, origY: offY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e) {
+    if (!arrastre.current) return;
+    setOffset({
+      x: arrastre.current.origX + (e.clientX - arrastre.current.startX),
+      y: arrastre.current.origY + (e.clientY - arrastre.current.startY),
+    });
+  }
+  function onPointerUp() {
+    arrastre.current = null;
+  }
+
+  function guardar() {
+    setGuardando(true);
+    const sx = -left / escala;
+    const sy = -top / escala;
+    const sw = marco / escala;
+    const sh = marco / escala;
+    const canvas = document.createElement("canvas");
+    canvas.width = AJUSTAR_FOTO_SALIDA;
+    canvas.height = AJUSTAR_FOTO_SALIDA;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(imagen, sx, sy, sw, sh, 0, 0, AJUSTAR_FOTO_SALIDA, AJUSTAR_FOTO_SALIDA);
+    canvas.toBlob(
+      (blob) => {
+        setGuardando(false);
+        if (blob) onListo(blob);
+        else onCancelar();
+      },
+      "image/jpeg",
+      0.9
+    );
+  }
+
+  return (
+    <Modal title="Ajustar foto" onClose={onCancelar}>
+      <p className="text-xs text-muted mb-3">Arrastra la foto para moverla, y usa el control para acercar o alejar.</p>
+      <div className="flex justify-center mb-4">
+        <div
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+          style={{ width: marco, height: marco, borderRadius: redondo ? "9999px" : "0.75rem", touchAction: "none" }}
+          className="relative overflow-hidden bg-line dark:bg-white/10 cursor-grab active:cursor-grabbing select-none border border-line dark:border-white/15"
+        >
+          <img
+            src={imagen.src}
+            draggable={false}
+            style={{ position: "absolute", left, top, width: anchoImg, height: altoImg, maxWidth: "none" }}
+          />
+        </div>
+      </div>
+      <Field label="Zoom">
+        <input
+          type="range"
+          min="1"
+          max="3"
+          step="0.01"
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          className="w-full accent-accent2"
+        />
+      </Field>
+      <div className="flex gap-2 justify-end mt-2">
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+        <PrimaryButton onClick={guardar} disabled={guardando}>{guardando ? "Guardando…" : "Usar esta foto"}</PrimaryButton>
+      </div>
+    </Modal>
+  );
+}
+
 function SearchInput({ value, onChange, placeholder }) {
   return (
     <div className="relative flex-1 min-w-0">
@@ -1354,6 +1472,7 @@ function PatientForm({ paciente, onClose, onSaved }) {
     }
   );
   const [subiendoFoto, setSubiendoFoto] = React.useState(false);
+  const [archivoParaAjustar, setArchivoParaAjustar] = React.useState(null);
   const [guardando, setGuardando] = React.useState(false);
   const [error, setError] = React.useState("");
   const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
@@ -1362,12 +1481,17 @@ function PatientForm({ paciente, onClose, onSaved }) {
   // Firestore) la primera vez que se sube su foto.
   const carpetaId = React.useRef(paciente?.id || uid()).current;
 
-  async function subirFoto(e) {
+  function elegirFoto(e) {
     const file = e.target.files[0];
-    if (!file) return;
+    e.target.value = "";
+    if (file) setArchivoParaAjustar(file);
+  }
+
+  async function subirFotoAjustada(blob) {
+    setArchivoParaAjustar(null);
     setSubiendoFoto(true);
     try {
-      const url = await subirACloudinary(file, carpetaPaciente(carpetaId, data.nombre));
+      const url = await subirACloudinary(blob, carpetaPaciente(carpetaId, data.nombre));
       setData((d) => ({ ...d, foto: url }));
     } catch (err) {
       setError(err.message);
@@ -1405,7 +1529,7 @@ function PatientForm({ paciente, onClose, onSaved }) {
           </div>
           <label className="text-sm text-accent2 cursor-pointer hover:underline">
             {subiendoFoto ? "Subiendo…" : "Subir foto"}
-            <input type="file" accept="image/*" className="hidden" onChange={subirFoto} disabled={subiendoFoto || !cloudinaryReady} />
+            <input type="file" accept="image/*" className="hidden" onChange={elegirFoto} disabled={subiendoFoto || !cloudinaryReady} />
           </label>
           {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir fotos)</span>}
         </div>
@@ -1442,6 +1566,9 @@ function PatientForm({ paciente, onClose, onSaved }) {
           <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
         </div>
       </form>
+      {archivoParaAjustar && (
+        <AjustarFotoModal file={archivoParaAjustar} redondo onCancelar={() => setArchivoParaAjustar(null)} onListo={subirFotoAjustada} />
+      )}
     </Modal>
   );
 }
@@ -2706,8 +2833,10 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
   const [direccion, setDireccion] = React.useState(config.direccion || "");
   const [logoUrl, setLogoUrl] = React.useState(config.logoUrl || "");
   const [subiendoLogo, setSubiendoLogo] = React.useState(false);
+  const [archivoLogoParaAjustar, setArchivoLogoParaAjustar] = React.useState(null);
   const [fotoMedico, setFotoMedico] = React.useState(config.fotoMedico || "");
   const [subiendoFotoMedico, setSubiendoFotoMedico] = React.useState(false);
+  const [archivoFotoMedicoParaAjustar, setArchivoFotoMedicoParaAjustar] = React.useState(null);
   const [guardando, setGuardando] = React.useState(false);
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
@@ -2741,12 +2870,17 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     setGuardando(false);
   }
 
-  async function subirLogo(e) {
+  function elegirLogo(e) {
     const file = e.target.files[0];
-    if (!file) return;
+    e.target.value = "";
+    if (file) setArchivoLogoParaAjustar(file);
+  }
+
+  async function subirLogoAjustado(blob) {
+    setArchivoLogoParaAjustar(null);
     setSubiendoLogo(true);
     try {
-      const url = await subirACloudinary(file, `${carpetaConsultorio()}/logo`);
+      const url = await subirACloudinary(blob, `${carpetaConsultorio()}/logo`);
       setLogoUrl(url);
       await withTimeout(
         db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
@@ -2760,12 +2894,17 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     setSubiendoLogo(false);
   }
 
-  async function subirFotoMedico(e) {
+  function elegirFotoMedico(e) {
     const file = e.target.files[0];
-    if (!file) return;
+    e.target.value = "";
+    if (file) setArchivoFotoMedicoParaAjustar(file);
+  }
+
+  async function subirFotoMedicoAjustada(blob) {
+    setArchivoFotoMedicoParaAjustar(null);
     setSubiendoFotoMedico(true);
     try {
-      const url = await subirACloudinary(file, `${carpetaConsultorio()}/perfil`);
+      const url = await subirACloudinary(blob, `${carpetaConsultorio()}/perfil`);
       setFotoMedico(url);
       await withTimeout(
         db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
@@ -2803,7 +2942,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
             </div>
             <label className="text-sm text-accent2 cursor-pointer hover:underline">
               {subiendoLogo ? "Subiendo…" : logoUrl ? "Cambiar logo" : "Subir logo"}
-              <input type="file" accept="image/*" className="hidden" onChange={subirLogo} disabled={subiendoLogo || !cloudinaryReady} />
+              <input type="file" accept="image/*" className="hidden" onChange={elegirLogo} disabled={subiendoLogo || !cloudinaryReady} />
             </label>
             {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir el logo)</span>}
           </div>
@@ -2813,9 +2952,15 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
             </div>
             <label className="text-sm text-accent2 cursor-pointer hover:underline">
               {subiendoFotoMedico ? "Subiendo…" : fotoMedico ? "Cambiar mi foto" : "Subir mi foto"}
-              <input type="file" accept="image/*" className="hidden" onChange={subirFotoMedico} disabled={subiendoFotoMedico || !cloudinaryReady} />
+              <input type="file" accept="image/*" className="hidden" onChange={elegirFotoMedico} disabled={subiendoFotoMedico || !cloudinaryReady} />
             </label>
           </div>
+          {archivoLogoParaAjustar && (
+            <AjustarFotoModal file={archivoLogoParaAjustar} onCancelar={() => setArchivoLogoParaAjustar(null)} onListo={subirLogoAjustado} />
+          )}
+          {archivoFotoMedicoParaAjustar && (
+            <AjustarFotoModal file={archivoFotoMedicoParaAjustar} redondo onCancelar={() => setArchivoFotoMedicoParaAjustar(null)} onListo={subirFotoMedicoAjustada} />
+          )}
           <form onSubmit={guardarPerfil}>
             <div className="grid sm:grid-cols-2 gap-x-4">
               <Field label="Nombre del consultorio"><TextInput value={nombreConsultorio} onChange={(e) => setNombreConsultorio(e.target.value)} /></Field>
