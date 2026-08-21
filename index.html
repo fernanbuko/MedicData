@@ -1070,7 +1070,7 @@ function NotificationBell() {
         )}
       </button>
       {abierta && (
-        <div className="absolute right-0 mt-2 w-80 max-w-[90vw] max-h-96 overflow-y-auto bg-card dark:bg-[#0F1B2C] border border-line dark:border-white/10 rounded-lg shadow-lg z-50">
+        <div className="fixed left-3 right-3 top-16 max-h-[70vh] md:absolute md:left-auto md:right-0 md:top-full md:mt-2 md:w-80 md:max-w-[90vw] md:max-h-96 overflow-y-auto bg-card dark:bg-[#0F1B2C] border border-line dark:border-white/10 rounded-lg shadow-lg z-50">
           <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-white/10">
             <span className="text-sm font-semibold">Notificaciones</span>
             {noLeidas > 0 && (
