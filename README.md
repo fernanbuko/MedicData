@@ -1,4 +1,4 @@
-# MediData
+# MedicData
 
 Historia clínica, recetas, exámenes y agenda de pacientes — una app para
 consultorios médicos, inspirada en [VetData](https://github.com/fernanbuko/appvet)

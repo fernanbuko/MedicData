@@ -85,7 +85,7 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch (e) {}
-  const title = data.notification?.title || data.title || "MediData";
+  const title = data.notification?.title || data.title || "MedicData";
   const body = data.notification?.body || data.body || "";
   const url = data.data?.url || "./index.html";
   event.waitUntil(

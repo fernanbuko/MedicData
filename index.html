@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>MediData</title>
+<title>MedicData</title>
 
 <!-- Aplica el modo oscuro/claro guardado en este celular ANTES de que
      cargue cualquier otra cosa, para que no se vea un destello del tema
@@ -25,7 +25,7 @@
 <meta name="theme-color" content="#1F3A5F" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="MediData" />
+<meta name="apple-mobile-web-app-title" content="MedicData" />
 <meta name="mobile-web-app-capable" content="yes" />
 
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div id="root">
-  <div id="boot-msg">Cargando MediData…</div>
+  <div id="boot-msg">Cargando MedicData…</div>
 </div>
 
 <!-- Si algo falla al cargar (script bloqueado, error de sintaxis, etc.),
@@ -114,7 +114,7 @@
       var el = document.getElementById("boot-msg");
       if (!el) return;
       el.innerHTML =
-        '<strong>No se pudo cargar MediData.</strong><br><br>' +
+        '<strong>No se pudo cargar MedicData.</strong><br><br>' +
         '<span style="font-family:monospace;font-size:13px;color:#B14E1C">' + msg + '</span><br><br>' +
         '<button onclick="location.reload()" style="padding:8px 16px;border-radius:8px;background:#1F3A5F;color:#fff;border:none;font-size:14px">Reintentar</button>';
     }
@@ -152,7 +152,7 @@
 
 <script type="text/babel" data-presets="react">
 // ==========================================================================
-// MediData — historia clínica, recetas, exámenes y agenda para consultorios
+// MedicData — historia clínica, recetas, exámenes y agenda para consultorios
 // médicos. Un solo archivo HTML, sin paso de build (React + Babel Standalone
 // vía CDN), guardado offline con un Service Worker, y datos en Firebase.
 // ==========================================================================
@@ -630,7 +630,7 @@ function LoginScreen() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-ink mx-auto mb-3 flex items-center justify-center text-paper text-2xl font-display dark:bg-accent dark:text-ink">+</div>
-          <h1 className="text-3xl font-display font-semibold">MediData</h1>
+          <h1 className="text-3xl font-display font-semibold">MedicData</h1>
           <p className="text-muted text-sm mt-1">Historia clínica, recetas, exámenes y agenda</p>
         </div>
 
@@ -879,7 +879,7 @@ function OnboardingGoogle({ user, onListo }) {
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-display font-semibold">¡Hola, {user.displayName || user.email}!</h1>
-          <p className="text-muted text-sm mt-1">Es la primera vez que entras. ¿Cómo vas a usar MediData?</p>
+          <p className="text-muted text-sm mt-1">Es la primera vez que entras. ¿Cómo vas a usar MedicData?</p>
         </div>
 
         {!modo && (
@@ -955,10 +955,18 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
     <div className="min-h-screen flex flex-col md:flex-row">
       {/* Barra lateral (escritorio) */}
       <aside className="hidden md:flex md:flex-col md:w-56 md:shrink-0 border-r border-line dark:border-white/10 bg-white/60 dark:bg-white/5 px-3 py-5">
-        <div className="flex items-center gap-2 px-2 mb-6">
-          <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display">+</div>
-          <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MediData"}</span>
-        </div>
+        <button
+          onClick={() => setView("inicio")}
+          className="flex items-center gap-2 px-2 mb-6 text-left rounded-lg hover:bg-white dark:hover:bg-white/10 py-1.5 -mx-0.5"
+          title="Ir a Inicio"
+        >
+          {config.logoUrl ? (
+            <img src={config.logoUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display shrink-0">+</div>
+          )}
+          <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MedicData"}</span>
+        </button>
         <nav className="flex-1 flex flex-col gap-1">
           {tabs.map((t) => (
             <button
@@ -977,10 +985,14 @@ function Layout({ view, setView, seccionesVisibles, onLogout, config, esColabora
 
       {/* Barra superior (celular) */}
       <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-line dark:border-white/10 bg-white/70 dark:bg-white/5 sticky top-0 z-30">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink text-sm font-display">+</div>
-          <span className="font-display font-semibold">{config.nombreConsultorio || "MediData"}</span>
-        </div>
+        <button onClick={() => setView("inicio")} className="flex items-center gap-2" title="Ir a Inicio">
+          {config.logoUrl ? (
+            <img src={config.logoUrl} className="w-7 h-7 rounded-lg object-cover shrink-0" />
+          ) : (
+            <div className="w-7 h-7 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink text-sm font-display shrink-0">+</div>
+          )}
+          <span className="font-display font-semibold">{config.nombreConsultorio || "MedicData"}</span>
+        </button>
         <button onClick={() => setMenuAbierto((v) => !v)} className="text-2xl leading-none px-1">☰</button>
       </header>
       {menuAbierto && (
@@ -2124,14 +2136,29 @@ function AgendaView() {
   }
 
   const hoyIso = hoyISO();
+  const anioHoy = hoy.getFullYear();
+  const aniosDisponibles = Array.from({ length: 9 }, (_, i) => anioHoy - 5 + i);
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between gap-2 mb-5 flex-wrap">
         <h1 className="text-2xl font-display font-semibold">Agenda</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <button onClick={() => cambiarMes(-1)} className="px-2 py-1 rounded hover:bg-line dark:hover:bg-white/10">‹</button>
-          <span className="text-sm font-medium w-36 text-center">{MESES[mesActual]} {anioActual}</span>
+          <select
+            value={mesActual}
+            onChange={(e) => { setMesActual(Number(e.target.value)); setDiaSel(null); }}
+            className="text-sm font-medium bg-transparent border border-line dark:border-white/15 rounded-md px-2 py-1.5"
+          >
+            {MESES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+          </select>
+          <select
+            value={anioActual}
+            onChange={(e) => { setAnioActual(Number(e.target.value)); setDiaSel(null); }}
+            className="text-sm font-medium bg-transparent border border-line dark:border-white/15 rounded-md px-2 py-1.5"
+          >
+            {aniosDisponibles.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
           <button onClick={() => cambiarMes(1)} className="px-2 py-1 rounded hover:bg-line dark:hover:bg-white/10">›</button>
         </div>
       </div>
@@ -2224,6 +2251,8 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
   const [especialidad, setEspecialidad] = React.useState(config.especialidad || "");
   const [telefono, setTelefono] = React.useState(config.telefono || "");
   const [direccion, setDireccion] = React.useState(config.direccion || "");
+  const [logoUrl, setLogoUrl] = React.useState(config.logoUrl || "");
+  const [subiendoLogo, setSubiendoLogo] = React.useState(false);
   const [guardando, setGuardando] = React.useState(false);
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
@@ -2235,7 +2264,8 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     setEspecialidad(config.especialidad || "");
     setTelefono(config.telefono || "");
     setDireccion(config.direccion || "");
-  }, [config.nombreConsultorio, config.nombreMedico, config.especialidad, config.telefono, config.direccion]);
+    setLogoUrl(config.logoUrl || "");
+  }, [config.nombreConsultorio, config.nombreMedico, config.especialidad, config.telefono, config.direccion, config.logoUrl]);
 
   async function guardarPerfil(e) {
     e.preventDefault();
@@ -2244,7 +2274,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
     try {
       await withTimeout(
         db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
-          { nombreConsultorio, nombreMedico, especialidad, telefono, direccion },
+          { nombreConsultorio, nombreMedico, especialidad, telefono, direccion, logoUrl },
           { merge: true }
         )
       );
@@ -2253,6 +2283,25 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
       alert(err.message);
     }
     setGuardando(false);
+  }
+
+  async function subirLogo(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendoLogo(true);
+    try {
+      const url = await subirACloudinary(file);
+      setLogoUrl(url);
+      await withTimeout(
+        db.collection("users").doc(window.__dataOwnerUid).collection("data").doc("config").set(
+          { logoUrl: url },
+          { merge: true }
+        )
+      );
+    } catch (err) {
+      alert(err.message);
+    }
+    setSubiendoLogo(false);
   }
 
   async function onActivarNotif() {
@@ -2273,6 +2322,16 @@ function ConfigView({ config, esColaborador, perfilColaborador, user }) {
       {!esColaborador && (
         <Card className="mb-5">
           <h2 className="font-semibold mb-3">Datos del consultorio</h2>
+          <div className="flex items-center gap-4 mb-4">
+            <div className="w-14 h-14 rounded-xl bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
+              {logoUrl ? <img src={logoUrl} className="w-full h-full object-cover" /> : "🏥"}
+            </div>
+            <label className="text-sm text-accent2 cursor-pointer hover:underline">
+              {subiendoLogo ? "Subiendo…" : logoUrl ? "Cambiar logo" : "Subir logo"}
+              <input type="file" accept="image/*" className="hidden" onChange={subirLogo} disabled={subiendoLogo || !cloudinaryReady} />
+            </label>
+            {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir el logo)</span>}
+          </div>
           <form onSubmit={guardarPerfil}>
             <div className="grid sm:grid-cols-2 gap-x-4">
               <Field label="Nombre del consultorio"><TextInput value={nombreConsultorio} onChange={(e) => setNombreConsultorio(e.target.value)} /></Field>
@@ -2402,7 +2461,7 @@ function BootWarning() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="max-w-md text-center">
-        <h1 className="text-2xl font-display font-semibold mb-2">MediData</h1>
+        <h1 className="text-2xl font-display font-semibold mb-2">MedicData</h1>
         <p className="text-muted text-sm">
           Reemplaza los valores de ejemplo en <code>firebaseConfig</code> (arriba del todo en el código, en{" "}
           <code>index.html</code>) con los de tu propio proyecto de Firebase para poder iniciar sesión y guardar tus
@@ -2468,7 +2527,7 @@ function App() {
 
   if (!firebaseReady) return <BootWarning />;
   if (user === undefined || dataOwnerEstado.cargando) {
-    return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando MediData…" /></div>;
+    return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando MedicData…" /></div>;
   }
   if (!user) return <LoginScreen />;
   if (dataOwnerEstado.necesitaOnboarding) {

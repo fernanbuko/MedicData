@@ -1,7 +1,7 @@
 {
   "name": "medidata-revisar-citas",
   "private": true,
-  "description": "Robot de GitHub Actions que revisa citas próximas y manda notificaciones push (MediData)",
+  "description": "Robot de GitHub Actions que revisa citas próximas y manda notificaciones push (MedicData)",
   "dependencies": {
     "firebase-admin": "^12.0.0"
   }

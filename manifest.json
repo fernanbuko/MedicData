@@ -1,6 +1,6 @@
 {
-  "name": "MediData",
-  "short_name": "MediData",
+  "name": "MedicData",
+  "short_name": "MedicData",
   "description": "Historia clínica, recetas, exámenes y agenda de pacientes para consultorios médicos",
   "start_url": "./index.html",
   "scope": "./",
