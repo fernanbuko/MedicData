@@ -779,15 +779,6 @@ async function registrarCuentaNueva(uid, { nombreConsultorio, nombreMedico, emai
 }
 
 function LoginScreen() {
-  const [modo, setModo] = React.useState("login"); // login | crear | colaborador
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [nombreConsultorio, setNombreConsultorio] = React.useState("");
-  const [nombreMedico, setNombreMedico] = React.useState("");
-  const [codigoInvitacion, setCodigoInvitacion] = React.useState("");
-  const [nombreColaborador, setNombreColaborador] = React.useState("");
-  const [error, setError] = React.useState("");
-  const [cargando, setCargando] = React.useState(false);
   const [cargandoGoogle, setCargandoGoogle] = React.useState(false);
   const [errorGoogle, setErrorGoogle] = React.useState("");
 
@@ -799,7 +790,8 @@ function LoginScreen() {
       // navegador conserve el estado entre la ida y la vuelta.
       await withTimeout(auth.signInWithPopup(googleProvider), 30000);
       // Si esta cuenta es nueva (nunca creó ni se unió a un consultorio),
-      // App muestra la pantalla de "Completar perfil" automáticamente.
+      // App muestra la pantalla de "Completar perfil" automáticamente —
+      // ahí es donde elige crear su consultorio o unirse con un código.
     } catch (err) {
       if (err && err.code === "auth/popup-closed-by-user") {
         // La persona cerró la ventana ella misma: no es un error real.
@@ -812,88 +804,6 @@ function LoginScreen() {
     setCargandoGoogle(false);
   }
 
-  async function iniciarSesion(e) {
-    e.preventDefault();
-    setError("");
-    setCargando(true);
-    try {
-      await withTimeout(auth.signInWithEmailAndPassword(email.trim(), password));
-    } catch (err) {
-      setError(traducirErrorAuth(err));
-    }
-    setCargando(false);
-  }
-
-  async function crearCuenta(e) {
-    e.preventDefault();
-    setError("");
-    if (!nombreConsultorio.trim() || !nombreMedico.trim()) {
-      setError("Completa el nombre del consultorio y tu nombre.");
-      return;
-    }
-    setCargando(true);
-    try {
-      const cred = await withTimeout(auth.createUserWithEmailAndPassword(email.trim(), password));
-      const nuevoUid = cred.user.uid;
-      const codigo = generarCodigoInvitacion();
-      await withTimeout(
-        db.collection("users").doc(nuevoUid).collection("data").doc("config").set({
-          nombreConsultorio: nombreConsultorio.trim(),
-          nombreMedico: nombreMedico.trim(),
-          especialidad: "",
-          telefono: "",
-          direccion: "",
-          inviteCode: codigo,
-        })
-      );
-      await withTimeout(db.collection("inviteCodes").doc(codigo).set({ ownerUid: nuevoUid }));
-      await registrarCuentaNueva(nuevoUid, { nombreConsultorio: nombreConsultorio.trim(), nombreMedico: nombreMedico.trim(), email: email.trim() });
-    } catch (err) {
-      setError(traducirErrorAuth(err));
-    }
-    setCargando(false);
-  }
-
-  async function unirseComoColaborador(e) {
-    e.preventDefault();
-    setError("");
-    const codigo = codigoInvitacion.trim().toUpperCase();
-    if (!codigo || !nombreColaborador.trim()) {
-      setError("Completa el código de invitación y tu nombre.");
-      return;
-    }
-    setCargando(true);
-    try {
-      const invDoc = await withTimeout(db.collection("inviteCodes").doc(codigo).get());
-      if (!invDoc.exists) {
-        setError("Ese código de invitación no existe. Pídele al consultorio que te lo confirme.");
-        setCargando(false);
-        return;
-      }
-      const ownerUid = invDoc.data().ownerUid;
-      const cred = await withTimeout(auth.createUserWithEmailAndPassword(email.trim(), password));
-      const nuevoUid = cred.user.uid;
-      await withTimeout(
-        db.collection("users").doc(nuevoUid).collection("meta").doc("perfil").set({
-          duenoUid: ownerUid,
-          nombre: nombreColaborador.trim(),
-          email: email.trim(),
-        })
-      );
-      await withTimeout(
-        db.collection("users").doc(ownerUid).collection("colaboradores").doc(nuevoUid).set({
-          nombre: nombreColaborador.trim(),
-          email: email.trim(),
-          secciones: ["agenda", "pacientes"],
-          creadoEn: firebase.firestore.FieldValue.serverTimestamp(),
-        })
-      );
-    } catch (err) {
-      setError(traducirErrorAuth(err));
-    }
-    setCargando(false);
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
@@ -901,45 +811,6 @@ function LoginScreen() {
           <div className="w-14 h-14 rounded-2xl bg-ink mx-auto mb-3 flex items-center justify-center text-paper text-2xl font-display dark:bg-accent dark:text-ink">+</div>
           <h1 className="text-3xl font-display font-semibold">MedicData</h1>
           <p className="text-muted text-sm mt-1">Historia clínica, recetas, exámenes y agenda</p>
-        </div>
-
-        <SecondaryButton
-          onClick={iniciarSesionConGoogle}
-          disabled={cargandoGoogle || !firebaseReady}
-          className="w-full justify-center mb-4 !bg-white dark:!bg-white/5"
-        >
-          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-            <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z" />
-            <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.4 18.9 12 24 12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 16 3 9 7.6 6.3 14.7z" />
-            <path fill="#4CAF50" d="M24 45c5.4 0 10.3-2.1 14-5.5l-6.5-5.5c-2 1.5-4.6 2.5-7.5 2.5-5.2 0-9.6-3.3-11.3-8l-6.5 5C9 40.4 16 45 24 45z" />
-            <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.5l6.5 5.5C41.4 35.6 45 30.3 45 24c0-1.4-.1-2.7-.4-3.5z" />
-          </svg>
-          {cargandoGoogle ? "Conectando…" : "Continuar con Google"}
-        </SecondaryButton>
-        {errorGoogle && <p className="text-warn text-sm mb-3 text-center">{errorGoogle}</p>}
-
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex-1 h-px bg-line dark:bg-white/10" />
-          <span className="text-xs text-faint">o con correo y contraseña</span>
-          <div className="flex-1 h-px bg-line dark:bg-white/10" />
-        </div>
-
-        <div className="flex gap-1 mb-5 bg-white/60 dark:bg-white/5 rounded-lg p-1 border border-line dark:border-white/10">
-          {[
-            ["login", "Iniciar sesión"],
-            ["crear", "Crear consultorio"],
-            ["colaborador", "Unirme a un equipo"],
-          ].map(([k, label]) => (
-            <button
-              key={k}
-              onClick={() => { setModo(k); setError(""); }}
-              className={`flex-1 text-xs sm:text-sm font-medium px-2 py-2 rounded-md transition ${
-                modo === k ? "bg-ink text-paper dark:bg-accent dark:text-ink" : "text-muted hover:text-ink dark:hover:text-paper"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
         </div>
 
         {!firebaseReady && (
@@ -950,44 +821,24 @@ function LoginScreen() {
           </Card>
         )}
 
-        <Card>
-          {modo === "login" && (
-            <form onSubmit={iniciarSesion}>
-              <Field label="Correo"><TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-              <Field label="Contraseña"><TextInput type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-              {error && <p className="text-warn text-sm mb-3">{error}</p>}
-              <PrimaryButton type="submit" disabled={cargando || !firebaseReady} className="w-full justify-center">
-                {cargando ? "Ingresando…" : "Iniciar sesión"}
-              </PrimaryButton>
-            </form>
-          )}
+        <SecondaryButton
+          onClick={iniciarSesionConGoogle}
+          disabled={cargandoGoogle || !firebaseReady}
+          className="w-full justify-center !bg-white dark:!bg-white/5"
+        >
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z" />
+            <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.4 18.9 12 24 12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 16 3 9 7.6 6.3 14.7z" />
+            <path fill="#4CAF50" d="M24 45c5.4 0 10.3-2.1 14-5.5l-6.5-5.5c-2 1.5-4.6 2.5-7.5 2.5-5.2 0-9.6-3.3-11.3-8l-6.5 5C9 40.4 16 45 24 45z" />
+            <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.5l6.5 5.5C41.4 35.6 45 30.3 45 24c0-1.4-.1-2.7-.4-3.5z" />
+          </svg>
+          {cargandoGoogle ? "Conectando…" : "Continuar con Google"}
+        </SecondaryButton>
+        {errorGoogle && <p className="text-warn text-sm mt-3 text-center">{errorGoogle}</p>}
 
-          {modo === "crear" && (
-            <form onSubmit={crearCuenta}>
-              <Field label="Nombre del consultorio"><TextInput required value={nombreConsultorio} onChange={(e) => setNombreConsultorio(e.target.value)} placeholder="Ej. Consultorio Dr. Pérez" /></Field>
-              <Field label="Tu nombre"><TextInput required value={nombreMedico} onChange={(e) => setNombreMedico(e.target.value)} /></Field>
-              <Field label="Correo"><TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-              <Field label="Contraseña" hint="Mínimo 6 caracteres"><TextInput type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-              {error && <p className="text-warn text-sm mb-3">{error}</p>}
-              <PrimaryButton type="submit" disabled={cargando || !firebaseReady} className="w-full justify-center">
-                {cargando ? "Creando…" : "Crear mi consultorio"}
-              </PrimaryButton>
-            </form>
-          )}
-
-          {modo === "colaborador" && (
-            <form onSubmit={unirseComoColaborador}>
-              <Field label="Código de invitación" hint="Te lo da el/la dueño/a del consultorio, en Configuración."><TextInput required value={codigoInvitacion} onChange={(e) => setCodigoInvitacion(e.target.value.toUpperCase())} placeholder="Ej. AB3D9KX" /></Field>
-              <Field label="Tu nombre"><TextInput required value={nombreColaborador} onChange={(e) => setNombreColaborador(e.target.value)} /></Field>
-              <Field label="Correo"><TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-              <Field label="Contraseña" hint="Mínimo 6 caracteres"><TextInput type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-              {error && <p className="text-warn text-sm mb-3">{error}</p>}
-              <PrimaryButton type="submit" disabled={cargando || !firebaseReady} className="w-full justify-center">
-                {cargando ? "Uniéndome…" : "Unirme al equipo"}
-              </PrimaryButton>
-            </form>
-          )}
-        </Card>
+        <p className="text-xs text-faint text-center mt-6">
+          La primera vez, después de entrar con Google, te preguntamos si vas a crear tu consultorio o si te unes a uno con un código de invitación.
+        </p>
       </div>
     </div>
   );
