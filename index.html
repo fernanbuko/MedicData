@@ -2492,10 +2492,12 @@ function InicioView({ config, setView, onAbrirPaciente }) {
           <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Citas de hoy</div>
           <div className="text-3xl font-display font-semibold">{cargandoCitas ? "…" : citasHoy.length}</div>
         </Card>
-        <Card>
-          <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Pacientes registrados</div>
-          <div className="text-3xl font-display font-semibold">{cargandoPacientes ? "…" : pacientes.length}</div>
-        </Card>
+        <button onClick={() => setView("pacientes")} className="text-left">
+          <Card className="hover:border-accent hover:shadow-md transition">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Pacientes registrados</div>
+            <div className="text-3xl font-display font-semibold">{cargandoPacientes ? "…" : pacientes.length}</div>
+          </Card>
+        </button>
       </div>
 
       <h2 className="font-semibold mb-3">Agenda de hoy</h2>
