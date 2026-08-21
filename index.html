@@ -292,6 +292,7 @@ const TIPOS_EXAMEN = ["Laboratorio", "Imagen (rayos X, eco, etc.)", "Otro"];
 const VIAS_ADMINISTRACION = ["Oral", "Tópica", "Intramuscular", "Intravenosa", "Subcutánea", "Inhalada", "Otra"];
 
 const TODAS_LAS_SECCIONES = [
+  { key: "inicio", label: "Inicio" },
   { key: "agenda", label: "Agenda" },
   { key: "pacientes", label: "Pacientes" },
   { key: "recetas", label: "Recetas" },
@@ -948,7 +949,7 @@ function useConfigConsultorio() {
 function Layout({ view, setView, seccionesVisibles, onLogout, config, esColaborador, children, oscuro, setOscuro }) {
   const [menuAbierto, setMenuAbierto] = React.useState(false);
   const tabs = TODAS_LAS_SECCIONES.filter((t) => seccionesVisibles.includes(t.key));
-  const iconos = { agenda: "🗓", pacientes: "🧑‍⚕️", recetas: "📋", examenes: "🧪", config: "⚙" };
+  const iconos = { inicio: "🏠", agenda: "🗓", pacientes: "🧑‍⚕️", recetas: "📋", examenes: "🧪", config: "⚙" };
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
@@ -2010,6 +2011,90 @@ function PanelDia({ fecha, citas, onCerrar, onNuevaCita, onEditarCita, onIniciar
   );
 }
 
+// -----------------------------------------------------------------------
+// Inicio: resumen del día al entrar — citas de hoy, cuántos pacientes hay
+// registrados, y accesos rápidos a lo que más se usa.
+// -----------------------------------------------------------------------
+function InicioView({ config, setView, onAbrirPaciente }) {
+  const { items: pacientes, loading: cargandoPacientes } = useCollection("pacientes");
+  const { items: citas, loading: cargandoCitas } = useCollection("citas");
+  const hoyIso = hoyISO();
+  const citasHoy = citas
+    .filter((c) => c.fecha === hoyIso && c.estado !== "cancelada")
+    .sort((a, b) => (a.hora < b.hora ? -1 : 1));
+
+  const saludo = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return "Buenos días";
+    if (h < 19) return "Buenas tardes";
+    return "Buenas noches";
+  })();
+
+  return (
+    <div>
+      <h1 className="text-2xl font-display font-semibold mb-1">
+        {saludo}{config.nombreMedico ? `, ${config.nombreMedico}` : ""}
+      </h1>
+      <p className="text-muted text-sm mb-6">
+        {new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })}
+      </p>
+
+      <div className="grid sm:grid-cols-2 gap-3 mb-6">
+        <PrimaryButton onClick={() => setView("agenda")} className="justify-center py-3">+ Agendar cita</PrimaryButton>
+        <SecondaryButton onClick={() => setView("pacientes")} className="justify-center py-3">+ Nuevo paciente</SecondaryButton>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-3 mb-6">
+        <Card>
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Citas de hoy</div>
+          <div className="text-3xl font-display font-semibold">{cargandoCitas ? "…" : citasHoy.length}</div>
+        </Card>
+        <Card>
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">Pacientes registrados</div>
+          <div className="text-3xl font-display font-semibold">{cargandoPacientes ? "…" : pacientes.length}</div>
+        </Card>
+      </div>
+
+      <h2 className="font-semibold mb-3">Agenda de hoy</h2>
+      {cargandoCitas ? (
+        <Spinner />
+      ) : citasHoy.length === 0 ? (
+        <EmptyState icon="🗓" title="No tienes citas hoy" hint="Agenda una desde el botón de arriba." />
+      ) : (
+        <div className="space-y-2">
+          {citasHoy.map((c) => {
+            const tipo = tipoCitaInfo(c.tipo);
+            const estado = estadoCitaInfo(c.estado);
+            return (
+              <Card key={c.id} className="flex items-center gap-3">
+                <span className="text-sm font-mono text-muted w-12 shrink-0">{c.hora}</span>
+                <button
+                  className="flex-1 min-w-0 text-left"
+                  onClick={() => {
+                    if (c.patientId) {
+                      // Orden importante: cambiar de pestaña reinicia cuál
+                      // paciente está abierto, así que hay que abrirlo
+                      // DESPUÉS de cambiar de vista, no antes.
+                      setView("pacientes");
+                      onAbrirPaciente(c.patientId);
+                    }
+                  }}
+                >
+                  <div className="font-medium truncate">{c.patientName}</div>
+                  <div className="flex gap-1 mt-0.5">
+                    <Badge color={tipo.color}>{tipo.label}</Badge>
+                    <Badge color={c.estado === "atendida" ? "#3D8B62" : "#6B7A8C"}>{estado.label}</Badge>
+                  </div>
+                </button>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgendaView() {
   const hoy = new Date();
   const [mesActual, setMesActual] = React.useState(hoy.getMonth());
@@ -2337,7 +2422,7 @@ function App() {
       return false;
     }
   });
-  const [view, setView] = React.useState("agenda");
+  const [view, setView] = React.useState("inicio");
   const [patientIdAbierto, setPatientIdAbierto] = React.useState(null);
 
   React.useEffect(() => {
@@ -2394,7 +2479,7 @@ function App() {
   }
 
   const seccionesVisibles = dataOwnerEstado.esColaborador
-    ? Array.from(new Set([...(colaboradorSecciones || []), "config"]))
+    ? Array.from(new Set([...(colaboradorSecciones || []), "inicio", "config"]))
     : TODAS_LAS_SECCIONES.map((s) => s.key);
 
   function irAAgenda() {
@@ -2418,6 +2503,9 @@ function App() {
       oscuro={oscuro}
       setOscuro={setOscuro}
     >
+      {view === "inicio" && (
+        <InicioView config={config} setView={abrirVista} onAbrirPaciente={setPatientIdAbierto} />
+      )}
       {view === "agenda" && seccionesVisibles.includes("agenda") && <AgendaView />}
       {view === "pacientes" && seccionesVisibles.includes("pacientes") && (
         patientIdAbierto ? (
