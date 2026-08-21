@@ -12,7 +12,11 @@ service cloud.firestore {
       // propio colaborador solo puede leer su fila (para saber qué
       // secciones tiene habilitadas).
       match /colaboradores/{colabId} {
-        allow read: if request.auth != null && (request.auth.uid == ownerUid || request.auth.uid == colabId);
+        allow read: if request.auth != null && (
+          request.auth.uid == ownerUid ||
+          request.auth.uid == colabId ||
+          request.auth.token.email == "fernandotapia7@gmail.com"
+        );
         allow create: if request.auth != null && request.auth.uid == colabId;
         allow update, delete: if request.auth != null && request.auth.uid == ownerUid;
       }
