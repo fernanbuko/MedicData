@@ -232,9 +232,12 @@ function esc(s) {
   })[c]);
 }
 
+function comoISO(fecha) {
+  return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}-${String(fecha.getDate()).padStart(2, "0")}`;
+}
+
 function hoyISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return comoISO(new Date());
 }
 
 function formatFecha(iso) {
@@ -330,9 +333,190 @@ const TODAS_LAS_SECCIONES = [
 // guarda en `window.__dataOwnerUid`.
 // -----------------------------------------------------------------------
 function coll(name) {
+  if (window.__modoDemo) return collDemo(name);
   const ownerUid = window.__dataOwnerUid;
   if (!ownerUid) throw new Error("Aún no se sabe de quién son los datos (dataOwnerUid vacío).");
   return db.collection("users").doc(ownerUid).collection(name);
+}
+
+// -----------------------------------------------------------------------
+// Modo demo (ver PanelAdminView, botón "Ver demo"): deja que quien
+// administra MedicData navegue la app real con pacientes de ejemplo, sin
+// tocar Firestore. Mientras window.__modoDemo esté activo, coll() (de
+// aquí arriba) devuelve esta colección "de mentira" que vive solo en
+// memoria — el resto del código (formularios, listas, PatientDetail…) no
+// se entera de la diferencia, porque usa la misma forma de leer/escribir
+// (onSnapshot, doc().set(), doc().delete()) que la colección real.
+// -----------------------------------------------------------------------
+let _demoStore = {};
+const _demoListeners = {};
+
+function _demoEmitir(nombre) {
+  (_demoListeners[nombre] || []).forEach((fn) => fn());
+}
+
+function _demoLimpiarValor(v) {
+  // Sin Firestore de verdad no existen los FieldValue (serverTimestamp,
+  // etc.) que usan crearDoc/actualizarDoc — se reemplazan por una fecha
+  // normal, que es lo que el resto del código ya sabe leer.
+  return v instanceof firebase.firestore.FieldValue ? new Date() : v;
+}
+
+function collDemo(nombre) {
+  return {
+    doc(id) {
+      const docId = id || uid();
+      return {
+        id: docId,
+        get() {
+          const data = (_demoStore[nombre] || {})[docId];
+          return Promise.resolve({ exists: !!data, id: docId, data: () => data });
+        },
+        set(data, opciones) {
+          if (!_demoStore[nombre]) _demoStore[nombre] = {};
+          const limpio = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, _demoLimpiarValor(v)]));
+          const previo = (opciones && opciones.merge && _demoStore[nombre][docId]) || {};
+          _demoStore[nombre][docId] = { ...previo, ...limpio };
+          _demoEmitir(nombre);
+          return Promise.resolve();
+        },
+        delete() {
+          if (_demoStore[nombre]) delete _demoStore[nombre][docId];
+          _demoEmitir(nombre);
+          return Promise.resolve();
+        },
+      };
+    },
+    orderBy(campo, direccion = "asc") {
+      return { ...this, _orden: { campo, direccion } };
+    },
+    onSnapshot(cb) {
+      const emitir = () => {
+        const datos = _demoStore[nombre] || {};
+        let docs = Object.entries(datos).map(([id, data]) => ({ id, data: () => data }));
+        if (this._orden) {
+          const { campo, direccion } = this._orden;
+          docs.sort((a, b) => {
+            const av = a.data()[campo] ?? "";
+            const bv = b.data()[campo] ?? "";
+            const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+            return direccion === "desc" ? -cmp : cmp;
+          });
+        }
+        cb({ docs });
+      };
+      if (!_demoListeners[nombre]) _demoListeners[nombre] = [];
+      _demoListeners[nombre].push(emitir);
+      emitir();
+      return () => {
+        _demoListeners[nombre] = (_demoListeners[nombre] || []).filter((fn) => fn !== emitir);
+      };
+    },
+  };
+}
+
+// Pacientes, consultas, recetas, exámenes y citas de ejemplo para el modo
+// demo — inventados, no corresponden a ninguna persona real.
+function generarDatosDemo() {
+  const fechaRelativa = (offsetDias) => new Date(Date.now() + offsetDias * 86400000);
+  const p1 = uid();
+  const p2 = uid();
+  const p3 = uid();
+  return {
+    pacientes: {
+      [p1]: {
+        nombre: "María Fernanda Solís", documentoTipo: "Cédula", documentoNumero: "0102030405",
+        fechaNacimiento: "1988-04-12", sexo: "Femenino", telefono: "0991234567", email: "maria.solis@example.com",
+        direccion: "Av. Amazonas y Naciones Unidas, Quito", contactoEmergenciaNombre: "Pedro Solís",
+        contactoEmergenciaTelefono: "0987654321", seguroMedico: "IESS", alergias: "Penicilina",
+        antecedentes: "Hipertensión arterial controlada", foto: "", creadoEn: fechaRelativa(-40),
+      },
+      [p2]: {
+        nombre: "Carlos Andrés Muñoz", documentoTipo: "Cédula", documentoNumero: "1103040506",
+        fechaNacimiento: "1975-11-02", sexo: "Masculino", telefono: "0998765432", email: "carlos.munoz@example.com",
+        direccion: "Cdla. Kennedy, Guayaquil", contactoEmergenciaNombre: "Lucía Muñoz",
+        contactoEmergenciaTelefono: "0991112233", seguroMedico: "Particular", alergias: "",
+        antecedentes: "Diabetes tipo 2", foto: "", creadoEn: fechaRelativa(-25),
+      },
+      [p3]: {
+        nombre: "Isabella Ramírez Vera", documentoTipo: "Cédula", documentoNumero: "0708091011",
+        fechaNacimiento: "2016-06-20", sexo: "Femenino", telefono: "0987001122", email: "",
+        direccion: "Cuenca, Ecuador", contactoEmergenciaNombre: "Sofía Vera",
+        contactoEmergenciaTelefono: "0987001122", seguroMedico: "ISSPOL", alergias: "Ninguna conocida",
+        antecedentes: "Sin antecedentes relevantes", foto: "", creadoEn: fechaRelativa(-10),
+      },
+    },
+    consultas: {
+      [uid()]: {
+        patientId: p1, patientName: "María Fernanda Solís", fecha: comoISO(fechaRelativa(-9)), hora: "09:30",
+        motivoConsulta: "Control de presión arterial", sintomas: "Dolor de cabeza ocasional",
+        presionArterial: "130/85", frecuenciaCardiaca: "76", frecuenciaRespiratoria: "16", temperatura: "36.5",
+        saturacionO2: "98", peso: "68", talla: "162", examenFisico: "Sin hallazgos relevantes",
+        diagnostico: "Hipertensión arterial estadio 1, controlada",
+        plan: "Continuar tratamiento actual, dieta baja en sodio",
+        indicaciones: "Tomar la presión 2 veces por semana", proximoControl: comoISO(fechaRelativa(21)),
+        creadoEn: fechaRelativa(-9),
+      },
+      [uid()]: {
+        patientId: p2, patientName: "Carlos Andrés Muñoz", fecha: comoISO(fechaRelativa(-3)), hora: "11:00",
+        motivoConsulta: "Control de diabetes", sintomas: "Fatiga leve",
+        presionArterial: "125/80", frecuenciaCardiaca: "80", frecuenciaRespiratoria: "18", temperatura: "36.7",
+        saturacionO2: "97", peso: "84", talla: "175", examenFisico: "Abdomen blando, sin dolor a la palpación",
+        diagnostico: "Diabetes tipo 2, glucemia elevada",
+        plan: "Ajuste de dosis de metformina, control en 1 mes",
+        indicaciones: "Dieta baja en carbohidratos, ejercicio moderado", proximoControl: comoISO(fechaRelativa(27)),
+        creadoEn: fechaRelativa(-3),
+      },
+    },
+    recetas: {
+      [uid()]: {
+        patientId: p1, patientName: "María Fernanda Solís", fecha: comoISO(fechaRelativa(-9)),
+        diagnostico: "Hipertensión arterial", notas: "Tomar con alimentos",
+        medicamentos: [{ nombre: "Losartán", dosis: "50 mg", via: "Oral", frecuencia: "Cada 24 horas", duracion: "30 días", indicaciones: "Tomar en la mañana" }],
+        creadoEn: fechaRelativa(-9),
+      },
+      [uid()]: {
+        patientId: p2, patientName: "Carlos Andrés Muñoz", fecha: comoISO(fechaRelativa(-3)),
+        diagnostico: "Diabetes tipo 2", notas: "",
+        medicamentos: [{ nombre: "Metformina", dosis: "850 mg", via: "Oral", frecuencia: "Cada 12 horas", duracion: "30 días", indicaciones: "Tomar con las comidas" }],
+        creadoEn: fechaRelativa(-3),
+      },
+    },
+    examenes: {
+      [uid()]: {
+        patientId: p1, patientName: "María Fernanda Solís", fecha: comoISO(fechaRelativa(-8)), tipo: "Laboratorio",
+        nombreExamen: "Perfil lipídico", resultado: "Colesterol total 210 mg/dL, LDL 130 mg/dL",
+        archivoUrl: "", notas: "Repetir en 3 meses", creadoEn: fechaRelativa(-8),
+      },
+      [uid()]: {
+        patientId: p3, patientName: "Isabella Ramírez Vera", fecha: comoISO(fechaRelativa(-9)),
+        tipo: "Imagen (rayos X, eco, etc.)", nombreExamen: "Radiografía de tórax",
+        resultado: "Sin hallazgos patológicos", archivoUrl: "", notas: "", creadoEn: fechaRelativa(-9),
+      },
+    },
+    citas: {
+      [uid()]: {
+        patientId: p2, patientName: "Carlos Andrés Muñoz", fecha: comoISO(fechaRelativa(-1)), hora: "10:00",
+        tipo: "control", estado: "atendida", notas: "", recordatorioEnviado: false, creadoEn: fechaRelativa(-2),
+      },
+      [uid()]: {
+        patientId: p3, patientName: "Isabella Ramírez Vera", fecha: hoyISO(), hora: "15:00",
+        tipo: "control", estado: "pendiente", notas: "Control de crecimiento", recordatorioEnviado: false,
+        creadoEn: fechaRelativa(-1),
+      },
+      [uid()]: {
+        patientId: p1, patientName: "María Fernanda Solís", fecha: comoISO(fechaRelativa(3)), hora: "09:00",
+        tipo: "control", estado: "confirmada", notas: "", recordatorioEnviado: false, creadoEn: fechaRelativa(-1),
+      },
+      [uid()]: {
+        patientId: p2, patientName: "Carlos Andrés Muñoz", fecha: comoISO(fechaRelativa(3)), hora: "11:30",
+        tipo: "primera_vez", estado: "pendiente", notas: "Primera valoración cardiológica",
+        recordatorioEnviado: false, creadoEn: fechaRelativa(-1),
+      },
+    },
+    fotos: {},
+    notificaciones: {},
+  };
 }
 
 function useCollection(name, { orderByField, direction = "asc", enabled = true } = {}) {
@@ -3111,12 +3295,82 @@ function ImagenLightbox({ src, onClose }) {
   );
 }
 
+// Modo demo: la app real (mismo Layout, mismas vistas) pero con
+// pacientes/citas/recetas de ejemplo en memoria (ver generarDatosDemo y
+// collDemo más arriba), para que quien administra MedicData la pueda
+// recorrer sin crear datos reales. Se abre desde el botón "Ver demo" del
+// Panel de administración. Configuración queda fuera a propósito: esa
+// pantalla escribe directo en la cuenta real de quien la abre (no pasa
+// por coll()), así que no es segura de mostrar aquí.
+function DemoAppView({ onClose }) {
+  // Activa el modo demo ANTES del primer render (no en un useEffect): los
+  // efectos de los hijos (los useCollection de InicioView, etc.) corren
+  // antes que el de este componente, así que si el flag se prendiera en
+  // un useEffect de aquí, alcanzarían a leer datos reales primero.
+  if (!window.__modoDemo) {
+    _demoStore = generarDatosDemo();
+    window.__modoDemo = true;
+  }
+
+  function cerrarDemo() {
+    window.__modoDemo = false;
+    _demoStore = {};
+    onClose();
+  }
+
+  usarNavegacionAtras(true, cerrarDemo);
+  const [view, setView] = React.useState("inicio");
+  const [patientIdAbierto, setPatientIdAbierto] = React.useState(null);
+  usarNavegacionAtras(view !== "inicio", () => { setPatientIdAbierto(null); setView("inicio"); });
+  usarNavegacionAtras(patientIdAbierto != null, () => setPatientIdAbierto(null));
+
+  const configDemo = {
+    nombreConsultorio: "Consultorio Demo",
+    nombreMedico: "Dra. Ejemplo Martínez",
+    especialidad: "Medicina General",
+    logoUrl: "",
+    fotoMedico: "",
+  };
+  const seccionesDemo = ["inicio", "agenda", "pacientes", "recetas", "examenes"];
+
+  function abrirVista(v) {
+    setPatientIdAbierto(null);
+    setView(v);
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-paper dark:bg-[#0F1B2C]">
+      <div className="sticky top-0 z-40 bg-ink text-paper dark:bg-accent dark:text-ink text-sm px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
+        <span>🧪 Modo demo — pacientes, citas y recetas de ejemplo. No se guardan en tu cuenta real.</span>
+        <button onClick={cerrarDemo} className="font-medium underline shrink-0">Salir del modo demo</button>
+      </div>
+      <Layout view={view} setView={abrirVista} seccionesVisibles={seccionesDemo} config={configDemo} esColaborador={false} esAdminApp={false}>
+        {view === "inicio" && <InicioView config={configDemo} setView={abrirVista} onAbrirPaciente={setPatientIdAbierto} />}
+        {view === "agenda" && <AgendaView />}
+        {view === "pacientes" && (
+          patientIdAbierto ? (
+            <PatientDetail patientId={patientIdAbierto} onVolver={() => setPatientIdAbierto(null)} config={configDemo} />
+          ) : (
+            <PacientesView onAbrirPaciente={setPatientIdAbierto} />
+          )
+        )}
+        {view === "recetas" && <RecetasView config={configDemo} />}
+        {view === "examenes" && <ExamenesView />}
+        {view === "config" && (
+          <EmptyState icon="⚙" title="Configuración no está disponible en el modo demo" hint="Esta pantalla es solo para ver ejemplos de pacientes, citas y recetas." />
+        )}
+      </Layout>
+    </div>
+  );
+}
+
 function PanelAdminView() {
   const [cuentas, setCuentas] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [colaboradoresPorDueno, setColaboradoresPorDueno] = React.useState({});
   const [imagenAmpliada, setImagenAmpliada] = React.useState(null);
   const [estadoRobot, setEstadoRobot] = React.useState(null);
+  const [mostrarDemo, setMostrarDemo] = React.useState(false);
 
   React.useEffect(() => {
     const unsub = db
@@ -3195,7 +3449,12 @@ function PanelAdminView() {
 
   return (
     <div>
-      <h1 className="text-2xl font-display font-semibold mb-1">Panel de administración</h1>
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+        <h1 className="text-2xl font-display font-semibold">Panel de administración</h1>
+        <SecondaryButton className="!px-3 !py-1.5 !text-xs" onClick={() => setMostrarDemo(true)}>
+          🧪 Ver demo
+        </SecondaryButton>
+      </div>
       <p className="text-muted text-sm mb-2">
         {cuentas.length} consultorio{cuentas.length === 1 ? "" : "s"} registrado{cuentas.length === 1 ? "" : "s"} en MedicData
         {totalColaboradores > 0 && `, ${totalColaboradores} colaborador${totalColaboradores === 1 ? "" : "es"} en total`}.
@@ -3272,6 +3531,7 @@ function PanelAdminView() {
         </div>
       )}
       {imagenAmpliada && <ImagenLightbox src={imagenAmpliada} onClose={() => setImagenAmpliada(null)} />}
+      {mostrarDemo && <DemoAppView onClose={() => setMostrarDemo(false)} />}
     </div>
   );
 }
