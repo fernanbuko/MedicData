@@ -18,7 +18,11 @@ service cloud.firestore {
           request.auth.token.email == "fernandotapia7@gmail.com"
         );
         allow create: if request.auth != null && request.auth.uid == colabId;
-        allow update, delete: if request.auth != null && request.auth.uid == ownerUid;
+        allow update: if request.auth != null && request.auth.uid == ownerUid;
+        // Además del/de la dueño/a, un/a colaborador/a puede borrar SU
+        // PROPIA fila para salir del equipo (ver "Eliminar cuenta" en
+        // Configuración) — no puede tocar la de nadie más.
+        allow delete: if request.auth != null && (request.auth.uid == ownerUid || request.auth.uid == colabId);
       }
 
       // Todo lo demás bajo users/{ownerUid}/... (config, pacientes,
@@ -55,6 +59,15 @@ service cloud.firestore {
            exists(/databases/$(database)/documents/users/$(uid)/colaboradores/$(request.auth.uid))) &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(["ultimaConexion", "logoUrl", "fotoMedico", "nombreConsultorio", "nombreMedico"])
+        ) ||
+        (
+          // "Eliminar cuenta" en Configuración (ver ConfigView): solo el
+          // propio dueño/a puede marcar su cuenta para borrado completo
+          // (nunca un/a colaborador/a) — el robot procesa esta marca y
+          // hace el borrado real con permisos de administrador.
+          request.auth.uid == uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["eliminada"]) &&
+          request.resource.data.eliminada == true
         )
       );
       allow delete: if false;

@@ -3069,6 +3069,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
   const [activandoNotif, setActivandoNotif] = React.useState(false);
+  const [eliminandoCuenta, setEliminandoCuenta] = React.useState(false);
 
   React.useEffect(() => {
     setNombreConsultorio(config.nombreConsultorio || "");
@@ -3164,6 +3165,85 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
     setActivandoNotif(false);
   }
 
+  // Borrar la cuenta de Firebase Auth exige haber iniciado sesión hace
+  // poco (por seguridad); si ya pasó un rato, Firebase pide "reingresar"
+  // antes de dejar borrar — como es Google-only, eso es un segundo popup
+  // de Google, no pedir la contraseña.
+  async function eliminarUsuarioDeAuth() {
+    try {
+      await auth.currentUser.delete();
+    } catch (err) {
+      if (err && err.code === "auth/requires-recent-login") {
+        await auth.currentUser.reauthenticateWithPopup(googleProvider);
+        await auth.currentUser.delete();
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  function manejarErrorEliminarCuenta(err) {
+    if (err && err.code === "auth/popup-closed-by-user") return; // canceló el reingreso, no es un error real
+    alert("No se pudo eliminar la cuenta: " + (err.message || "intenta de nuevo."));
+  }
+
+  // Colaborador/a: no es dueño/a de ningún dato del consultorio, así que
+  // "eliminar cuenta" es simplemente salir del equipo (borra su propia
+  // fila en colaboradores/ y su perfil) y borrar su usuario. Todo pasa
+  // directo, sin depender del robot.
+  async function salirDelEquipo() {
+    const confirmado = await pedirConfirmacion(
+      "¿Eliminar tu cuenta? Vas a perder el acceso a este consultorio. Esta acción no se puede deshacer.",
+      { textoConfirmar: "Eliminar mi cuenta", peligro: true }
+    );
+    if (!confirmado) return;
+    setEliminandoCuenta(true);
+    try {
+      await withTimeout(db.collection("users").doc(window.__dataOwnerUid).collection("colaboradores").doc(user.uid).delete());
+      await withTimeout(db.collection("users").doc(user.uid).collection("meta").doc("perfil").delete());
+      await eliminarUsuarioDeAuth();
+    } catch (err) {
+      manejarErrorEliminarCuenta(err);
+    }
+    setEliminandoCuenta(false);
+  }
+
+  // Dueño/a: hay todo un consultorio de datos (pacientes, consultas,
+  // recetas, exámenes, citas, fotos) y archivos en Cloudinary de por
+  // medio — borrar eso desde el navegador sería lento y arriesgado si se
+  // corta la conexión a la mitad. En vez de eso, se deja la cuenta
+  // marcada como "eliminada" y el robot (con permisos de administrador)
+  // hace el borrado completo y de una sola vez en su próxima corrida —
+  // por eso puede tardar unos minutos en desaparecer todo del todo,
+  // aunque el cierre de sesión es inmediato.
+  async function eliminarCuentaCompleta() {
+    const confirmado = await pedirConfirmacion(
+      "¿Eliminar tu cuenta? Se borra PERMANENTEMENTE tu consultorio: todos los pacientes, consultas, recetas, exámenes, citas, fotos y archivos guardados. Puede tardar unos minutos en terminar de borrarse todo. Esta acción no se puede deshacer.",
+      { textoConfirmar: "Continuar", peligro: true }
+    );
+    if (!confirmado) return;
+    const texto = await pedirTexto('Para confirmar, escribe "ELIMINAR" (en mayúsculas)', {
+      textoConfirmar: "Eliminar mi cuenta",
+      peligro: true,
+      placeholder: "ELIMINAR",
+    });
+    if (texto !== "ELIMINAR") return;
+
+    setEliminandoCuenta(true);
+    try {
+      await marcarCarpetaCloudinaryParaBorrar(carpetaConsultorio());
+      await withTimeout(
+        db.collection("cuentasRegistradas").doc(window.__dataOwnerUid).set({ eliminada: true }, { merge: true })
+      );
+      await eliminarUsuarioDeAuth();
+    } catch (err) {
+      manejarErrorEliminarCuenta(err);
+    }
+    setEliminandoCuenta(false);
+  }
+
+  const eliminarCuenta = esColaborador ? salirDelEquipo : eliminarCuentaCompleta;
+
   return (
     <div className="max-w-2xl">
       <h1 className="text-2xl font-display font-semibold mb-5">Configuración</h1>
@@ -3253,6 +3333,18 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
         <div className="pt-3 border-t border-line dark:border-white/10">
           <DangerLink onClick={onLogout}>Cerrar sesión</DangerLink>
         </div>
+      </Card>
+
+      <Card className="mb-5 !border-warnborder">
+        <h2 className="font-semibold mb-2 text-warn">Zona de peligro</h2>
+        <p className="text-sm text-muted mb-3">
+          {esColaborador
+            ? "Elimina tu cuenta y tu acceso a este consultorio. No se puede deshacer."
+            : "Elimina tu cuenta y borra permanentemente todos los pacientes, consultas, recetas, exámenes, citas y fotos de tu consultorio. No se puede deshacer."}
+        </p>
+        <DangerLink onClick={eliminarCuenta} className={eliminandoCuenta ? "opacity-50 pointer-events-none" : ""}>
+          {eliminandoCuenta ? "Eliminando…" : "Eliminar cuenta"}
+        </DangerLink>
       </Card>
 
       {(!firebaseReady || !cloudinaryReady) && (

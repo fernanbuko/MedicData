@@ -286,6 +286,28 @@ async function revisarConsultorio(ownerUid, cuentaActual) {
   }
 }
 
+// "Eliminar cuenta" en Configuración (ver ConfigView) solo marca la
+// cuenta con eliminada:true — borrar de verdad todos sus pacientes,
+// consultas, recetas, exámenes, citas y fotos, más sus archivos de
+// Cloudinary, lo hace el robot aquí, con permisos de administrador. Es
+// mucho más seguro que intentar borrar todo eso desde el navegador
+// (podría cortarse la conexión a la mitad y dejar la cuenta a medio
+// borrar). recursiveDelete se encarga de TODAS las subcolecciones de
+// una sola vez, sin tener que enumerarlas a mano.
+async function procesarCuentaEliminada(ownerUid) {
+  console.log(`   🗑 Cuenta ${ownerUid} marcada para eliminar — borrando todo…`);
+  if (cloudinaryBorrarListo) {
+    try {
+      await procesarPendientesDeCloudinary(ownerUid);
+    } catch (e) {
+      console.error("   ❌ Error borrando archivos de Cloudinary de la cuenta eliminada:", e.message);
+    }
+  }
+  await db.recursiveDelete(db.collection("users").doc(ownerUid));
+  await db.collection("cuentasRegistradas").doc(ownerUid).delete();
+  console.log(`   ✅ Cuenta ${ownerUid} eliminada por completo.`);
+}
+
 // Deja constancia de cuándo corrió el robot por última vez, para que el
 // panel de administración lo muestre (ver PanelAdminView) — así se nota
 // si el cron externo dejó de llamar al workflow.
@@ -314,6 +336,14 @@ async function main() {
   const cuentasSnap = await db.collection("cuentasRegistradas").get();
   console.log(`   ${cuentasSnap.size} cuenta(s) encontrada(s).`);
   for (const cuentaDoc of cuentasSnap.docs) {
+    if (cuentaDoc.data().eliminada) {
+      try {
+        await procesarCuentaEliminada(cuentaDoc.id);
+      } catch (e) {
+        console.error(`   ❌ Error eliminando la cuenta ${cuentaDoc.id}:`, e.message);
+      }
+      continue;
+    }
     if (cuentaDoc.data().bloqueada) {
       console.log(`   ⏭ ${cuentaDoc.id} está bloqueada, se salta.`);
       continue;

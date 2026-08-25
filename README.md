@@ -135,6 +135,12 @@ Si no configuras esto, la app sigue funcionando igual — las fotos
 eliminadas simplemente se quedan ocupando espacio en Cloudinary hasta que
 agregues las claves.
 
+Estas mismas claves son las que usa el robot para borrar TODOS los
+archivos de un consultorio cuando alguien usa "Eliminar cuenta" en
+Configuración (logo, foto de perfil, y las fotos/archivos de todos sus
+pacientes) — el resto de esa cuenta (pacientes, consultas, etc.) se borra
+de Firestore en el mismo paso, con permisos de administrador.
+
 ### Que corra puntual de verdad, con cron-job.org
 
 El disparador `schedule` de GitHub Actions es "mejor esfuerzo": en repos
