@@ -37,6 +37,19 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 const messaging = admin.messaging();
 
+// Para borrar de verdad un archivo de Cloudinary hace falta la clave
+// secreta de la cuenta — nunca debe estar en el código del navegador, así
+// que vive solo aquí, como secreto de GitHub (ver README). El nombre de
+// cuenta (CLOUDINARY_CLOUD_NAME) no es secreto, es el mismo que ya está
+// público en index.html.
+const CLOUDINARY_CLOUD_NAME = "zcuh5bjn";
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || "";
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || "";
+const cloudinaryBorrarListo = !!(CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+if (!cloudinaryBorrarListo) {
+  console.log("ℹ️ CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET no están configurados: las fotos borradas en la app se van a quedar pendientes de borrar en Cloudinary hasta que se agreguen (ver README).");
+}
+
 // Zona horaria del consultorio, como desfase respecto a UTC en horas.
 // Ecuador = -5. Cámbialo si tu consultorio está en otro país.
 const DESFASE_HORAS = -5;
@@ -121,10 +134,65 @@ async function sincronizarResumenCuenta(ownerUid, config, cuentaActual) {
   }
 }
 
+// Saca el "public_id" y el tipo de recurso (image/video/raw) de una URL
+// como https://res.cloudinary.com/<cuenta>/image/upload/v169.../carpeta/archivo.jpg
+// — son los datos que pide la API de Cloudinary para borrar un archivo.
+function datosCloudinaryDesdeUrl(url) {
+  const m = String(url || "").match(/res\.cloudinary\.com\/[^/]+\/(image|video|raw)\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+(?:\?.*)?$/);
+  if (!m) return null;
+  return { resourceType: m[1], publicId: decodeURIComponent(m[2]) };
+}
+
+async function borrarDeCloudinary(publicIds, resourceType) {
+  const params = new URLSearchParams();
+  publicIds.forEach((id) => params.append("public_ids[]", id));
+  const auth = Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString("base64");
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/resources/${resourceType}/upload?${params}`,
+    { method: "DELETE", headers: { Authorization: `Basic ${auth}` } }
+  );
+  if (!res.ok) throw new Error(`Cloudinary respondió ${res.status}`);
+  return res.json();
+}
+
+// Revisa las fotos que se borraron desde la app (ver marcarCloudinaryParaBorrar
+// en index.html) y las borra de verdad de Cloudinary, para no acumular
+// archivos huérfanos ocupando espacio. Si no hay clave de Cloudinary
+// configurada todavía, las deja pendientes — no se pierden, solo esperan.
+async function procesarPendientesDeCloudinary(ownerUid) {
+  if (!cloudinaryBorrarListo) return;
+  const snap = await db.collection("users").doc(ownerUid).collection("cloudinaryPendientes").get();
+  if (snap.empty) return;
+
+  const porTipo = {}; // { image: [{docRef, publicId}], ... }
+  for (const doc of snap.docs) {
+    const datos = datosCloudinaryDesdeUrl(doc.data().url);
+    if (!datos) {
+      // URL rara/no reconocida: no se puede borrar sola, se descarta la
+      // solicitud para no quedar reintentando para siempre.
+      await doc.ref.delete().catch(() => {});
+      continue;
+    }
+    if (!porTipo[datos.resourceType]) porTipo[datos.resourceType] = [];
+    porTipo[datos.resourceType].push({ ref: doc.ref, publicId: datos.publicId });
+  }
+
+  for (const [resourceType, items] of Object.entries(porTipo)) {
+    try {
+      await borrarDeCloudinary(items.map((it) => it.publicId), resourceType);
+      await Promise.all(items.map((it) => it.ref.delete()));
+      console.log(`   🗑 ${items.length} archivo(s) borrados de Cloudinary (${resourceType}).`);
+    } catch (e) {
+      console.error(`   ❌ Error borrando de Cloudinary (${resourceType}):`, e.message);
+    }
+  }
+}
+
 async function revisarConsultorio(ownerUid, cuentaActual) {
   const configDoc = await db.collection("users").doc(ownerUid).collection("data").doc("config").get();
   const config = configDoc.exists ? configDoc.data() : {};
   await sincronizarResumenCuenta(ownerUid, config, cuentaActual);
+  await procesarPendientesDeCloudinary(ownerUid);
   // (Los colaboradores no tienen tokens propios en este esquema simple:
   // el push llega a los dispositivos donde inició sesión la cuenta dueña
   // del consultorio. Si quieres notificar también a cada colaborador por

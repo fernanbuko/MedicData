@@ -602,6 +602,22 @@ async function subirACloudinary(file, folder) {
   const data = await res.json();
   return data.secure_url;
 }
+
+// Borrar un archivo de Cloudinary de verdad requiere la clave secreta de
+// la cuenta, que nunca debe estar en el código del navegador (cualquiera
+// podría verla y borrar/cambiar cualquier archivo de tu cuenta). Por eso
+// esto no borra nada directo: deja una "solicitud" guardada, y el robot
+// de recordatorios (revisar-citas.js, que sí corre con esa clave secreta
+// de forma segura en GitHub Actions) la procesa en su próxima corrida y
+// borra el archivo real de Cloudinary. No bloquea nada si falla.
+async function marcarCloudinaryParaBorrar(url) {
+  if (!url) return;
+  try {
+    await crearDoc("cloudinaryPendientes", { url });
+  } catch (e) {
+    console.error("No se pudo encolar el borrado en Cloudinary:", e);
+  }
+}
 // -----------------------------------------------------------------------
 // Piezas de interfaz reutilizables
 // -----------------------------------------------------------------------
@@ -1934,6 +1950,7 @@ function FotosDePaciente({ paciente, fotos }) {
   async function eliminarFoto(foto) {
     if (!(await pedirConfirmacion("¿Eliminar esta foto? No se puede deshacer.", { textoConfirmar: "Eliminar", peligro: true }))) return;
     await borrarDoc("fotos", foto.id);
+    marcarCloudinaryParaBorrar(foto.url);
     setIndiceAbierto(null);
   }
 

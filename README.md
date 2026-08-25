@@ -108,6 +108,33 @@ Por defecto asume que el consultorio está en la zona horaria de Ecuador
 (UTC-5). Si estás en otro país, cambia `DESFASE_HORAS` al inicio de
 `notificaciones-robot/revisar-citas.js`.
 
+### Borrar de verdad las fotos eliminadas en Cloudinary (opcional)
+
+Cuando alguien elimina una foto en la app, esta se borra de Firestore al
+instante, pero el archivo en Cloudinary no se puede borrar directo desde
+el navegador — hace falta la clave secreta de la cuenta, y esa clave
+nunca debe estar en el código del sitio (cualquiera podría verla y borrar
+o cambiar cualquier archivo de tu cuenta). El robot de recordatorios ya
+corre de forma segura en GitHub Actions, así que es quien se encarga de
+borrar de verdad en su próxima corrida:
+
+1. En [cloudinary.com](https://cloudinary.com) → **Dashboard**, en la
+   sección "Account details" copia el **API Key**, y toca el ícono del
+   ojo para revelar el **API Secret** y cópialo también.
+2. En tu repositorio de GitHub: **Settings → Secrets and variables →
+   Actions → New repository secret**, y agrega dos secretos:
+   - Nombre: `CLOUDINARY_API_KEY` — valor: el API Key que copiaste.
+   - Nombre: `CLOUDINARY_API_SECRET` — valor: el API Secret que copiaste.
+   - ⚠️ **No me pegues estas claves a mí ni las pongas en el código del
+     repositorio** — van solo en los secretos de GitHub.
+3. Listo — sin hacer nada más, en la próxima corrida del robot (cada ~30
+   minutos, o a mano desde **Actions → Run workflow**) se borran de
+   Cloudinary las fotos que ya se hayan eliminado en la app.
+
+Si no configuras esto, la app sigue funcionando igual — las fotos
+eliminadas simplemente se quedan ocupando espacio en Cloudinary hasta que
+agregues las claves.
+
 ### Que corra puntual de verdad, con cron-job.org
 
 El disparador `schedule` de GitHub Actions es "mejor esfuerzo": en repos
