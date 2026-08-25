@@ -1096,7 +1096,7 @@ function LoginScreen({ onInvitado }) {
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-ink mx-auto mb-3 flex items-center justify-center text-paper text-2xl font-display dark:bg-accent dark:text-ink">+</div>
+          <img src="icon-192.png" className="w-14 h-14 rounded-2xl mx-auto mb-3" />
           <h1 className="text-3xl font-display font-semibold">MedicData</h1>
           <p className="text-muted text-sm mt-1">Historia clínica, recetas, exámenes y agenda</p>
         </div>
@@ -1468,7 +1468,7 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
           {config.logoUrl ? (
             <img src={config.logoUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" />
           ) : (
-            <div className="w-8 h-8 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink font-display shrink-0">+</div>
+            <img src="icon-192.png" className="w-8 h-8 rounded-lg shrink-0" />
           )}
           <span className="font-display font-semibold text-lg truncate">{config.nombreConsultorio || "MedicData"}</span>
         </button>
@@ -1493,7 +1493,7 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
           {config.logoUrl ? (
             <img src={config.logoUrl} className="w-7 h-7 rounded-lg object-cover shrink-0" />
           ) : (
-            <div className="w-7 h-7 rounded-lg bg-ink dark:bg-accent flex items-center justify-center text-paper dark:text-ink text-sm font-display shrink-0">+</div>
+            <img src="icon-192.png" className="w-7 h-7 rounded-lg shrink-0" />
           )}
           <span className="font-display font-semibold">{config.nombreConsultorio || "MedicData"}</span>
         </button>
