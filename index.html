@@ -523,7 +523,11 @@ function useCollection(name, { orderByField, direction = "asc", enabled = true }
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
-    if (!enabled || !firebaseReady || !window.__dataOwnerUid) {
+    // El modo demo (ver DemoAppView) puede no tener ningún dataOwnerUid
+    // real detrás — por ejemplo cuando alguien lo abre desde "Probar sin
+    // crear cuenta" sin haber iniciado sesión nunca — así que se deja
+    // pasar igual; coll() ya sabe devolver datos de mentira en ese caso.
+    if (!enabled || !firebaseReady || (!window.__dataOwnerUid && !window.__modoDemo)) {
       setLoading(false);
       return;
     }
@@ -582,6 +586,11 @@ function carpetaPaciente(patientFolderId, nombrePaciente) {
 }
 
 async function subirACloudinary(file, folder) {
+  // El modo demo (ver DemoAppView) es alcanzable sin haber iniciado
+  // sesión ("Probar sin crear cuenta"), así que no puede dejar subir
+  // archivos de verdad — irían a la cuenta real de Cloudinary del dueño
+  // de la app, sin ningún control de quién los sube.
+  if (window.__modoDemo) throw new Error("Subir archivos no está disponible en el modo demo.");
   if (!cloudinaryReady) throw new Error("Cloudinary no está configurado todavía.");
   const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
   const fd = new FormData();
@@ -1057,7 +1066,7 @@ async function actualizarResumenCuenta(campos) {
   }
 }
 
-function LoginScreen() {
+function LoginScreen({ onInvitado }) {
   const [cargandoGoogle, setCargandoGoogle] = React.useState(false);
   const [errorGoogle, setErrorGoogle] = React.useState("");
 
@@ -1114,6 +1123,12 @@ function LoginScreen() {
           {cargandoGoogle ? "Conectando…" : "Continuar con Google"}
         </SecondaryButton>
         {errorGoogle && <p className="text-warn text-sm mt-3 text-center">{errorGoogle}</p>}
+
+        {onInvitado && (
+          <button onClick={onInvitado} className="block mx-auto text-sm font-medium text-accent2 hover:underline mt-4">
+            Probar sin crear cuenta
+          </button>
+        )}
 
         <p className="text-xs text-faint text-center mt-6">
           La primera vez, después de entrar con Google, te preguntamos si vas a crear tu consultorio o si te unes a uno con un código de invitación.
@@ -3547,6 +3562,7 @@ function App() {
   });
   const [view, setView] = React.useState("inicio");
   const [patientIdAbierto, setPatientIdAbierto] = React.useState(null);
+  const [modoInvitado, setModoInvitado] = React.useState(false);
 
   usarEscuchaGlobalNavegacionAtras();
   // Atrás desde cualquier pestaña vuelve a Inicio; atrás con la ficha de
@@ -3646,10 +3662,11 @@ function App() {
   ]);
 
   if (!firebaseReady) return <BootWarning />;
+  if (modoInvitado) return <DemoAppView onClose={() => setModoInvitado(false)} />;
   if (user === undefined || dataOwnerEstado.cargando) {
     return <div className="min-h-screen flex items-center justify-center"><Spinner label="Cargando MedicData…" /></div>;
   }
-  if (!user) return <LoginScreen />;
+  if (!user) return <LoginScreen onInvitado={() => setModoInvitado(true)} />;
   if (dataOwnerEstado.necesitaOnboarding) {
     return <OnboardingGoogle user={user} onListo={() => setVersionOnboarding((n) => n + 1)} />;
   }
