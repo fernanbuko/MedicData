@@ -3069,6 +3069,12 @@ function minutosDesde(timestamp) {
   return Math.floor((Date.now() - fecha.getTime()) / (1000 * 60));
 }
 
+function formatFechaHoraCompleta(timestamp) {
+  if (!timestamp) return "—";
+  const fecha = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return fecha.toLocaleString("es-EC", { hour12: false });
+}
+
 function PanelAdminView() {
   const [cuentas, setCuentas] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -3158,13 +3164,13 @@ function PanelAdminView() {
         {totalColaboradores > 0 && `, ${totalColaboradores} colaborador${totalColaboradores === 1 ? "" : "es"} en total`}.
       </p>
       <p className="text-xs text-faint mb-5 flex items-center gap-1.5 flex-wrap">
-        <span>🤖 Robot de recordatorios:</span>
+        <span>🤖 Robot de recordatorios —</span>
         {!estadoRobot || !estadoRobot.ultimaCorrida ? (
           <span>todavía no ha corrido</span>
         ) : (
           <>
             <span className={minutosDesde(estadoRobot.ultimaCorrida) > 90 ? "text-warn font-medium" : ""}>
-              última corrida {tiempoRelativo(estadoRobot.ultimaCorrida)}
+              Actualizado: {formatFechaHoraCompleta(estadoRobot.ultimaCorrida)}
               {minutosDesde(estadoRobot.ultimaCorrida) > 90 && " ⚠ (revisa el cron)"}
             </span>
             <span>· {estadoRobot.cuentasRevisadas ?? 0} cuenta{estadoRobot.cuentasRevisadas === 1 ? "" : "s"} revisada{estadoRobot.cuentasRevisadas === 1 ? "" : "s"}</span>
