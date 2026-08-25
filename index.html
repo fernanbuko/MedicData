@@ -3176,16 +3176,18 @@ function PanelAdminView() {
             return (
               <div key={c.id}>
                 <Card className="flex items-center gap-3 flex-wrap">
-                  <div className="w-10 h-10 rounded-lg bg-paper dark:bg-white/10 overflow-hidden flex items-center justify-center text-lg shrink-0">
-                    {c.logoUrl ? <img src={c.logoUrl} className="w-full h-full object-cover" /> : "🏥"}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="w-10 h-10 rounded-lg bg-paper dark:bg-white/10 overflow-hidden flex items-center justify-center text-lg shrink-0">
+                      {c.logoUrl ? <img src={c.logoUrl} className="w-full h-full object-cover" /> : "🏥"}
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-paper dark:bg-white/10 overflow-hidden flex items-center justify-center text-lg shrink-0">
+                      {c.fotoMedico ? <img src={c.fotoMedico} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
+                    </div>
                   </div>
                   <Badge color="#2E86D9">Dueño/a</Badge>
                   <div className="flex-1 min-w-[180px]">
                     <div className="font-medium">{c.nombreConsultorio || "(sin nombre)"}</div>
-                    <div className="text-xs text-muted flex items-center gap-1.5">
-                      {c.fotoMedico && <img src={c.fotoMedico} className="w-4 h-4 rounded-full object-cover shrink-0" />}
-                      <span>{c.nombreMedico} {c.email ? `· ${c.email}` : ""}</span>
-                    </div>
+                    <div className="text-xs text-muted">{c.nombreMedico} {c.email ? `· ${c.email}` : ""}</div>
                   </div>
                   <div className="text-xs text-muted min-w-[110px]">
                     <div>Registrado: {c.creadoEn ? tiempoRelativo(c.creadoEn) : "—"}</div>
