@@ -536,6 +536,13 @@ function Modal({ title, onClose, children, wide }) {
 // -----------------------------------------------------------------------
 const _pilaNavegacionAtras = [];
 let _idNavegacionAtras = 0;
+// Cuántos popstate esperamos que sean "eco" de un history.back() que
+// disparamos nosotros mismos (al cerrar algo por un botón, no por el
+// atrás del celular) — ver el comentario dentro de usarNavegacionAtras.
+// Sin esto, ese eco lo agarra el listener global de más abajo y cierra
+// TAMBIÉN lo siguiente de la pila (por ejemplo, la pestaña de atrás),
+// como si el usuario hubiera tocado atrás dos veces por una sola.
+let _ecosDeCierrePropio = 0;
 
 function usarNavegacionAtras(abierto, cerrar) {
   const idRef = React.useRef(null);
@@ -557,8 +564,12 @@ function usarNavegacionAtras(abierto, cerrar) {
       if (i !== -1) _pilaNavegacionAtras.splice(i, 1);
       // Si esta pantalla se cerró por otro medio (no por el botón atrás),
       // la entrada que empujamos sigue siendo la actual del historial —
-      // hay que consumirla para no dejar un "atrás" fantasma.
+      // hay que consumirla para no dejar un "atrás" fantasma. Marcamos
+      // que el popstate que esto dispara es nuestro propio eco, para que
+      // el listener global no lo confunda con un atrás de verdad y cierre
+      // de más.
       if (window.history.state && window.history.state.medidataNivel === id) {
+        _ecosDeCierrePropio++;
         window.history.back();
       }
     };
@@ -569,6 +580,10 @@ function usarNavegacionAtras(abierto, cerrar) {
 function usarEscuchaGlobalNavegacionAtras() {
   React.useEffect(() => {
     function onPopState() {
+      if (_ecosDeCierrePropio > 0) {
+        _ecosDeCierrePropio--;
+        return;
+      }
       const tope = _pilaNavegacionAtras.pop();
       if (tope) tope.cerrar();
       // Si la pila está vacía, no queda nada por cerrar dentro de la app
