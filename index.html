@@ -3164,9 +3164,8 @@ function PanelAdminView() {
         {totalColaboradores > 0 && `, ${totalColaboradores} colaborador${totalColaboradores === 1 ? "" : "es"} en total`}.
       </p>
       <p className="text-xs text-faint mb-5 flex items-center gap-1.5 flex-wrap">
-        <span>🤖 Robot de recordatorios —</span>
         {!estadoRobot || !estadoRobot.ultimaCorrida ? (
-          <span>todavía no ha corrido</span>
+          <span>Todavía no ha corrido el robot de recordatorios</span>
         ) : (
           <>
             <span className={minutosDesde(estadoRobot.ultimaCorrida) > 90 ? "text-warn font-medium" : ""}>
