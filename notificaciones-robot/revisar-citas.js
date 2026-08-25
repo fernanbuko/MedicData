@@ -100,9 +100,31 @@ async function enviarNotificacion(ownerUid, tokens, titulo, cuerpo, url) {
   }
 }
 
-async function revisarConsultorio(ownerUid) {
+// Copia logo/foto/nombre desde la config del consultorio hacia su fila en
+// cuentasRegistradas, para que el panel de administración los pueda
+// mostrar (ese panel solo tiene permiso de leer cuentasRegistradas, no la
+// config de cada consultorio). El robot corre con permisos de
+// administrador, así que puede leer la config de CUALQUIER consultorio —
+// por eso este "backfill" pasa solo, sin que cada médico/a tenga que
+// entrar a Configuración y guardar de nuevo.
+async function sincronizarResumenCuenta(ownerUid, config, cuentaActual) {
+  const campos = {};
+  for (const campo of ["logoUrl", "fotoMedico", "nombreConsultorio", "nombreMedico"]) {
+    if (config[campo] && config[campo] !== cuentaActual[campo]) campos[campo] = config[campo];
+  }
+  if (Object.keys(campos).length === 0) return;
+  try {
+    await db.collection("cuentasRegistradas").doc(ownerUid).set(campos, { merge: true });
+    console.log(`   🖼 Resumen actualizado (${Object.keys(campos).join(", ")}).`);
+  } catch (e) {
+    console.error("   ❌ Error actualizando el resumen de la cuenta:", e.message);
+  }
+}
+
+async function revisarConsultorio(ownerUid, cuentaActual) {
   const configDoc = await db.collection("users").doc(ownerUid).collection("data").doc("config").get();
   const config = configDoc.exists ? configDoc.data() : {};
+  await sincronizarResumenCuenta(ownerUid, config, cuentaActual);
   // (Los colaboradores no tienen tokens propios en este esquema simple:
   // el push llega a los dispositivos donde inició sesión la cuenta dueña
   // del consultorio. Si quieres notificar también a cada colaborador por
@@ -169,7 +191,7 @@ async function main() {
       continue;
     }
     try {
-      await revisarConsultorio(cuentaDoc.id);
+      await revisarConsultorio(cuentaDoc.id, cuentaDoc.data());
     } catch (e) {
       console.error(`   ❌ Error revisando ${cuentaDoc.id}:`, e.message);
     }
