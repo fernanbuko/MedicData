@@ -2768,6 +2768,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
   const [logoUrl, setLogoUrl] = React.useState(config.logoUrl || "");
   const [subiendoLogo, setSubiendoLogo] = React.useState(false);
   const [archivoLogoParaAjustar, setArchivoLogoParaAjustar] = React.useState(null);
+  const [imagenAmpliada, setImagenAmpliada] = React.useState(null);
   const [fotoMedico, setFotoMedico] = React.useState(config.fotoMedico || "");
   const [subiendoFotoMedico, setSubiendoFotoMedico] = React.useState(false);
   const [archivoFotoMedicoParaAjustar, setArchivoFotoMedicoParaAjustar] = React.useState(null);
@@ -2874,7 +2875,10 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
         <Card className="mb-5">
           <h2 className="font-semibold mb-3">Datos del consultorio</h2>
           <div className="flex items-center gap-4 mb-4">
-            <div className="w-14 h-14 rounded-xl bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
+            <div
+              onClick={() => logoUrl && setImagenAmpliada(logoUrl)}
+              className={`w-14 h-14 rounded-xl bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted ${logoUrl ? "cursor-pointer" : ""}`}
+            >
               {logoUrl ? <img src={logoUrl} className="w-full h-full object-cover" /> : "🏥"}
             </div>
             <label className="text-sm text-accent2 cursor-pointer hover:underline">
@@ -2884,7 +2888,10 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
             {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir el logo)</span>}
           </div>
           <div className="flex items-center gap-4 mb-4">
-            <div className="w-14 h-14 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
+            <div
+              onClick={() => fotoMedico && setImagenAmpliada(fotoMedico)}
+              className={`w-14 h-14 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted ${fotoMedico ? "cursor-pointer" : ""}`}
+            >
               {fotoMedico ? <img src={fotoMedico} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
             </div>
             <label className="text-sm text-accent2 cursor-pointer hover:underline">
@@ -2961,6 +2968,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
           <p className="mt-2">Revisa el <code>README.md</code> del proyecto para el paso a paso.</p>
         </Card>
       )}
+      {imagenAmpliada && <ImagenLightbox src={imagenAmpliada} onClose={() => setImagenAmpliada(null)} />}
     </div>
   );
 }
