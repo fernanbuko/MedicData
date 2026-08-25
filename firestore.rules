@@ -50,8 +50,12 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == uid && request.resource.data.bloqueada == false;
       allow update: if request.auth != null && (
         request.auth.token.email == "fernandotapia7@gmail.com" ||
-        (request.auth.uid == uid &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(["ultimaConexion"]))
+        (
+          (request.auth.uid == uid ||
+           exists(/databases/$(database)/documents/users/$(uid)/colaboradores/$(request.auth.uid))) &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["ultimaConexion", "logoUrl", "fotoMedico", "nombreConsultorio", "nombreMedico"])
+        )
       );
       allow delete: if false;
     }
