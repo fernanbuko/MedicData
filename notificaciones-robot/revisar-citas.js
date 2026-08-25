@@ -143,16 +143,43 @@ function datosCloudinaryDesdeUrl(url) {
   return { resourceType: m[1], publicId: decodeURIComponent(m[2]) };
 }
 
+function encabezadoCloudinary() {
+  return { Authorization: `Basic ${Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString("base64")}` };
+}
+
 async function borrarDeCloudinary(publicIds, resourceType) {
   const params = new URLSearchParams();
   publicIds.forEach((id) => params.append("public_ids[]", id));
-  const auth = Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString("base64");
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/resources/${resourceType}/upload?${params}`,
-    { method: "DELETE", headers: { Authorization: `Basic ${auth}` } }
+    { method: "DELETE", headers: encabezadoCloudinary() }
   );
   if (!res.ok) throw new Error(`Cloudinary respondió ${res.status}`);
   return res.json();
+}
+
+// Borra TODO lo que haya adentro de una carpeta (logo, foto de perfil,
+// fotos, exámenes…), sin importar qué tipos de archivo tenga — se usa al
+// eliminar un paciente. Intenta los tres tipos de recurso de Cloudinary
+// porque una carpeta de paciente puede tener fotos (image) y PDFs de
+// exámenes (raw); el que no tenga nada simplemente no borra nada, sin
+// error. Al final intenta borrar también el objeto "carpeta" vacío — es
+// solo cosmético (no ocupa espacio), así que si falla no importa.
+async function borrarCarpetaDeCloudinary(carpeta) {
+  for (const resourceType of ["image", "raw", "video"]) {
+    const params = new URLSearchParams({ prefix: carpeta });
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/resources/${resourceType}/upload?${params}`,
+      { method: "DELETE", headers: encabezadoCloudinary() }
+    );
+    if (!res.ok) throw new Error(`Cloudinary respondió ${res.status} borrando ${resourceType} de "${carpeta}"`);
+  }
+  for (const sub of [`${carpeta}/fotos`, `${carpeta}/examenes`, carpeta]) {
+    await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/folders/${encodeURIComponent(sub)}`, {
+      method: "DELETE",
+      headers: encabezadoCloudinary(),
+    }).catch(() => {});
+  }
 }
 
 // Revisa las fotos que se borraron desde la app (ver marcarCloudinaryParaBorrar
@@ -164,9 +191,15 @@ async function procesarPendientesDeCloudinary(ownerUid) {
   const snap = await db.collection("users").doc(ownerUid).collection("cloudinaryPendientes").get();
   if (snap.empty) return;
 
-  const porTipo = {}; // { image: [{docRef, publicId}], ... }
+  const porTipo = {}; // { image: [{docRef, publicId}], ... } — archivos sueltos
+  const carpetas = []; // { ref, carpeta } — carpetas completas (paciente eliminado)
   for (const doc of snap.docs) {
-    const datos = datosCloudinaryDesdeUrl(doc.data().url);
+    const { url, carpeta } = doc.data();
+    if (carpeta) {
+      carpetas.push({ ref: doc.ref, carpeta });
+      continue;
+    }
+    const datos = datosCloudinaryDesdeUrl(url);
     if (!datos) {
       // URL rara/no reconocida: no se puede borrar sola, se descarta la
       // solicitud para no quedar reintentando para siempre.
@@ -184,6 +217,16 @@ async function procesarPendientesDeCloudinary(ownerUid) {
       console.log(`   🗑 ${items.length} archivo(s) borrados de Cloudinary (${resourceType}).`);
     } catch (e) {
       console.error(`   ❌ Error borrando de Cloudinary (${resourceType}):`, e.message);
+    }
+  }
+
+  for (const { ref, carpeta } of carpetas) {
+    try {
+      await borrarCarpetaDeCloudinary(carpeta);
+      await ref.delete();
+      console.log(`   🗑 Carpeta borrada de Cloudinary: ${carpeta}`);
+    } catch (e) {
+      console.error(`   ❌ Error borrando la carpeta "${carpeta}" de Cloudinary:`, e.message);
     }
   }
 }

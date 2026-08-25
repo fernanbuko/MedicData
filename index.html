@@ -618,6 +618,19 @@ async function marcarCloudinaryParaBorrar(url) {
     console.error("No se pudo encolar el borrado en Cloudinary:", e);
   }
 }
+
+// Igual que marcarCloudinaryParaBorrar, pero para borrar TODA una carpeta
+// de una vez (logo, foto de perfil, fotos, exámenes… lo que sea que haya
+// adentro) — se usa al eliminar un paciente, para no tener que encolar
+// archivo por archivo.
+async function marcarCarpetaCloudinaryParaBorrar(carpeta) {
+  if (!carpeta) return;
+  try {
+    await crearDoc("cloudinaryPendientes", { carpeta });
+  } catch (e) {
+    console.error("No se pudo encolar el borrado de la carpeta en Cloudinary:", e);
+  }
+}
 // -----------------------------------------------------------------------
 // Piezas de interfaz reutilizables
 // -----------------------------------------------------------------------
@@ -1586,7 +1599,6 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
 // recetas y exámenes de cada persona.
 // -----------------------------------------------------------------------
 function PatientForm({ paciente, onClose, onSaved }) {
-  usarNavegacionAtras(true, onClose);
   const [data, setData] = React.useState(
     paciente || {
       nombre: "",
@@ -1615,6 +1627,17 @@ function PatientForm({ paciente, onClose, onSaved }) {
   // Firestore) la primera vez que se sube su foto.
   const carpetaId = React.useRef(paciente?.id || uid()).current;
 
+  // Si se cierra el formulario (Cancelar, la ✕, el botón atrás) sin
+  // guardar, cualquier foto que ya se haya subido a Cloudinary en esta
+  // sesión (la original si se reemplazó, o la nueva si nunca se guardó)
+  // se queda huérfana — se encola para borrar. Si en cambio se guarda,
+  // guardar() llama a onSaved() directo, sin pasar por aquí.
+  function cerrarForm() {
+    if (data.foto && data.foto !== (paciente?.foto || "")) marcarCloudinaryParaBorrar(data.foto);
+    onClose();
+  }
+  usarNavegacionAtras(true, cerrarForm);
+
   function elegirFoto(e) {
     const file = e.target.files[0];
     e.target.value = "";
@@ -1624,9 +1647,11 @@ function PatientForm({ paciente, onClose, onSaved }) {
   async function subirFotoAjustada(blob) {
     setArchivoParaAjustar(null);
     setSubiendoFoto(true);
+    const anterior = data.foto;
     try {
       const url = await subirACloudinary(blob, carpetaPaciente(carpetaId, data.nombre));
       setData((d) => ({ ...d, foto: url }));
+      if (anterior) marcarCloudinaryParaBorrar(anterior);
     } catch (err) {
       setError(err.message);
     }
@@ -1655,7 +1680,7 @@ function PatientForm({ paciente, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={paciente ? "Editar paciente" : "Nuevo paciente"} onClose={onClose} wide>
+    <Modal title={paciente ? "Editar paciente" : "Nuevo paciente"} onClose={cerrarForm} wide>
       <form onSubmit={guardar}>
         <div className="flex items-center gap-4 mb-4">
           <div className="w-16 h-16 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted">
@@ -1696,7 +1721,7 @@ function PatientForm({ paciente, onClose, onSaved }) {
 
         {error && <p className="text-warn text-sm mb-3">{error}</p>}
         <div className="flex gap-2 justify-end mt-2">
-          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <SecondaryButton onClick={cerrarForm}>Cancelar</SecondaryButton>
           <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
         </div>
       </form>
@@ -1805,7 +1830,6 @@ function imprimirFichaPaciente(paciente, consultas, recetas, examenes, config) {
 // heridas, resultados visuales, etc. Con visor a pantalla completa.
 // -----------------------------------------------------------------------
 function FotoForm({ paciente, onClose, onSaved }) {
-  usarNavegacionAtras(true, onClose);
   const [fecha, setFecha] = React.useState(hoyISO());
   const [nota, setNota] = React.useState("");
   const [fotos, setFotos] = React.useState([]); // [{ id, url }]
@@ -1839,8 +1863,21 @@ function FotoForm({ paciente, onClose, onSaved }) {
   }
 
   function quitarFoto(id) {
-    setFotos((f) => f.filter((foto) => foto.id !== id));
+    setFotos((f) => {
+      const foto = f.find((x) => x.id === id);
+      if (foto) marcarCloudinaryParaBorrar(foto.url);
+      return f.filter((x) => x.id !== id);
+    });
   }
+
+  // Si se cierra el formulario sin guardar, las fotos que ya se subieron
+  // a Cloudinary en esta sesión quedan huérfanas — se encolan para
+  // borrar. Si en cambio se guarda, guardar() llama a onSaved() directo.
+  function cancelarForm() {
+    fotos.forEach((foto) => marcarCloudinaryParaBorrar(foto.url));
+    onClose();
+  }
+  usarNavegacionAtras(true, cancelarForm);
 
   async function guardar(e) {
     e.preventDefault();
@@ -1862,7 +1899,7 @@ function FotoForm({ paciente, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`Nuevas fotos — ${paciente.nombre}`} onClose={onClose}>
+    <Modal title={`Nuevas fotos — ${paciente.nombre}`} onClose={cancelarForm}>
       <form onSubmit={guardar}>
         <Field label="Fotos">
           {fotos.length > 0 && (
@@ -1893,7 +1930,7 @@ function FotoForm({ paciente, onClose, onSaved }) {
 
         {error && <p className="text-warn text-sm mb-3">{error}</p>}
         <div className="flex gap-2 justify-end mt-2">
-          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <SecondaryButton onClick={cancelarForm}>Cancelar</SecondaryButton>
           <PrimaryButton type="submit" disabled={guardando || subiendo || fotos.length === 0}>
             {guardando ? "Guardando…" : fotos.length > 1 ? `Guardar ${fotos.length} fotos` : "Guardar"}
           </PrimaryButton>
@@ -2005,13 +2042,14 @@ function PatientDetail({ patientId, onVolver, config }) {
 
   async function eliminarPaciente() {
     const confirmado = await pedirConfirmacion(
-      `¿Eliminar a ${paciente.nombre}? Se borra su ficha; las consultas, recetas y exámenes que ya tiene guardados quedan en el sistema pero ya no se van a poder ver desde su ficha. Esta acción no se puede deshacer.`,
+      `¿Eliminar a ${paciente.nombre}? Se borra su ficha y sus fotos/archivos guardados; las consultas, recetas y exámenes que ya tiene guardados quedan en el sistema pero ya no se van a poder ver desde su ficha. Esta acción no se puede deshacer.`,
       { textoConfirmar: "Eliminar", peligro: true }
     );
     if (!confirmado) return;
     setEliminando(true);
     try {
       await borrarDoc("pacientes", paciente.id);
+      marcarCarpetaCloudinaryParaBorrar(carpetaPaciente(paciente.id, paciente.nombre));
       onVolver();
     } catch (err) {
       alert(err.message);
@@ -2462,7 +2500,6 @@ function RecetasView({ config }) {
 // un archivo adjunto (PDF o foto) guardado en Cloudinary.
 // -----------------------------------------------------------------------
 function ExamenForm({ paciente, onClose, onSaved }) {
-  usarNavegacionAtras(true, onClose);
   const [data, setData] = React.useState({
     fecha: hoyISO(),
     tipo: TIPOS_EXAMEN[0],
@@ -2476,13 +2513,24 @@ function ExamenForm({ paciente, onClose, onSaved }) {
   const [error, setError] = React.useState("");
   const set = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
 
+  // Si se cierra el formulario sin guardar, el archivo que ya se haya
+  // subido a Cloudinary en esta sesión queda huérfano — se encola para
+  // borrar. Si en cambio se guarda, guardar() llama a onSaved() directo.
+  function cerrarForm() {
+    if (data.archivoUrl) marcarCloudinaryParaBorrar(data.archivoUrl);
+    onClose();
+  }
+  usarNavegacionAtras(true, cerrarForm);
+
   async function subirArchivo(e) {
     const file = e.target.files[0];
     if (!file) return;
     setSubiendo(true);
+    const anterior = data.archivoUrl;
     try {
       const url = await subirACloudinary(file, `${carpetaPaciente(paciente.id, paciente.nombre)}/examenes`);
       setData((d) => ({ ...d, archivoUrl: url }));
+      if (anterior) marcarCloudinaryParaBorrar(anterior);
     } catch (err) {
       setError(err.message);
     }
@@ -2507,7 +2555,7 @@ function ExamenForm({ paciente, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`Nuevo examen — ${paciente.nombre}`} onClose={onClose} wide>
+    <Modal title={`Nuevo examen — ${paciente.nombre}`} onClose={cerrarForm} wide>
       <form onSubmit={guardar}>
         <div className="grid sm:grid-cols-2 gap-x-4">
           <Field label="Fecha"><TextInput type="date" required value={data.fecha} onChange={set("fecha")} /></Field>
@@ -2535,7 +2583,7 @@ function ExamenForm({ paciente, onClose, onSaved }) {
 
         {error && <p className="text-warn text-sm mb-3">{error}</p>}
         <div className="flex gap-2 justify-end mt-2">
-          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <SecondaryButton onClick={cerrarForm}>Cancelar</SecondaryButton>
           <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar examen"}</PrimaryButton>
         </div>
       </form>
@@ -3060,6 +3108,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
   async function subirLogoAjustado(blob) {
     setArchivoLogoParaAjustar(null);
     setSubiendoLogo(true);
+    const anterior = logoUrl;
     try {
       const url = await subirACloudinary(blob, `${carpetaConsultorio()}/logo`);
       setLogoUrl(url);
@@ -3070,6 +3119,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
         )
       );
       actualizarResumenCuenta({ logoUrl: url });
+      marcarCloudinaryParaBorrar(anterior);
     } catch (err) {
       alert(err.message);
     }
@@ -3085,6 +3135,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
   async function subirFotoMedicoAjustada(blob) {
     setArchivoFotoMedicoParaAjustar(null);
     setSubiendoFotoMedico(true);
+    const anterior = fotoMedico;
     try {
       const url = await subirACloudinary(blob, `${carpetaConsultorio()}/perfil`);
       setFotoMedico(url);
@@ -3095,6 +3146,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
         )
       );
       actualizarResumenCuenta({ fotoMedico: url });
+      marcarCloudinaryParaBorrar(anterior);
     } catch (err) {
       alert(err.message);
     }
