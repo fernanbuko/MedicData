@@ -175,6 +175,23 @@ async function revisarConsultorio(ownerUid, cuentaActual) {
   }
 }
 
+// Deja constancia de cuándo corrió el robot por última vez, para que el
+// panel de administración lo muestre (ver PanelAdminView) — así se nota
+// si el cron externo dejó de llamar al workflow.
+async function marcarCorridaDelRobot(cuentasRevisadas) {
+  try {
+    await db.collection("sistemaRobot").doc("estado").set(
+      {
+        ultimaCorrida: admin.firestore.FieldValue.serverTimestamp(),
+        cuentasRevisadas,
+      },
+      { merge: true }
+    );
+  } catch (e) {
+    console.error("❌ Error guardando el estado del robot:", e.message);
+  }
+}
+
 async function main() {
   console.log("🔎 Buscando consultorios registrados…");
   // OJO: nunca escribimos nada directo en "users/{uid}" (solo en sus
@@ -196,6 +213,7 @@ async function main() {
       console.error(`   ❌ Error revisando ${cuentaDoc.id}:`, e.message);
     }
   }
+  await marcarCorridaDelRobot(cuentasSnap.size);
   console.log("✅ Revisión terminada.");
 }
 

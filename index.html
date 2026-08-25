@@ -3063,10 +3063,28 @@ function diasDesde(timestamp) {
   return Math.floor((Date.now() - fecha.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+function minutosDesde(timestamp) {
+  if (!timestamp) return Infinity;
+  const fecha = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return Math.floor((Date.now() - fecha.getTime()) / (1000 * 60));
+}
+
 function PanelAdminView() {
   const [cuentas, setCuentas] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [colaboradoresPorDueno, setColaboradoresPorDueno] = React.useState({});
+  const [estadoRobot, setEstadoRobot] = React.useState(null);
+
+  React.useEffect(() => {
+    const unsub = db
+      .collection("sistemaRobot")
+      .doc("estado")
+      .onSnapshot(
+        (doc) => setEstadoRobot(doc.exists ? doc.data() : null),
+        (err) => console.error("Error leyendo el estado del robot:", err)
+      );
+    return () => unsub();
+  }, []);
 
   React.useEffect(() => {
     const unsub = db
@@ -3135,9 +3153,23 @@ function PanelAdminView() {
   return (
     <div>
       <h1 className="text-2xl font-display font-semibold mb-1">Panel de administración</h1>
-      <p className="text-muted text-sm mb-5">
+      <p className="text-muted text-sm mb-2">
         {cuentas.length} consultorio{cuentas.length === 1 ? "" : "s"} registrado{cuentas.length === 1 ? "" : "s"} en MedicData
         {totalColaboradores > 0 && `, ${totalColaboradores} colaborador${totalColaboradores === 1 ? "" : "es"} en total`}.
+      </p>
+      <p className="text-xs text-faint mb-5 flex items-center gap-1.5 flex-wrap">
+        <span>🤖 Robot de recordatorios:</span>
+        {!estadoRobot || !estadoRobot.ultimaCorrida ? (
+          <span>todavía no ha corrido</span>
+        ) : (
+          <>
+            <span className={minutosDesde(estadoRobot.ultimaCorrida) > 90 ? "text-warn font-medium" : ""}>
+              última corrida {tiempoRelativo(estadoRobot.ultimaCorrida)}
+              {minutosDesde(estadoRobot.ultimaCorrida) > 90 && " ⚠ (revisa el cron)"}
+            </span>
+            <span>· {estadoRobot.cuentasRevisadas ?? 0} cuenta{estadoRobot.cuentasRevisadas === 1 ? "" : "s"} revisada{estadoRobot.cuentasRevisadas === 1 ? "" : "s"}</span>
+          </>
+        )}
       </p>
 
       {loading ? (

@@ -60,6 +60,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Estado del robot de recordatorios (ver revisar-citas.js): cuándo
+    // corrió por última vez y a cuántas cuentas revisó. Solo lo escribe el
+    // robot, con su propia llave de administrador (que se salta estas
+    // reglas) — desde el cliente nunca se puede escribir, solo lo lee
+    // quien administra MedicData, para notar si el cron externo dejó de
+    // llamarlo.
+    match /sistemaRobot/{doc} {
+      allow read: if request.auth != null && request.auth.token.email == "fernandotapia7@gmail.com";
+      allow write: if false;
+    }
+
     // Los códigos de invitación: se necesitan ANTES de iniciar sesión (para
     // validar el código al unirse a un equipo), así que su lectura es
     // pública — el código en sí es una cadena al azar difícil de adivinar,
