@@ -3812,24 +3812,37 @@ function PanelAdminView() {
                 </Card>
                 {colaboradores.length > 0 && (
                   <div className="ml-4 sm:ml-8 mt-1.5 space-y-1.5 border-l-2 border-line dark:border-white/10 pl-3">
-                    {colaboradores.map((colab) => (
-                      <Card key={colab.id} className="flex items-center gap-3 flex-wrap !py-2.5">
-                        <div
-                          onClick={() => colab.foto && setImagenAmpliada(colab.foto)}
-                          className={`w-9 h-9 rounded-full bg-paper dark:bg-white/10 overflow-hidden flex items-center justify-center text-sm shrink-0 ${colab.foto ? "cursor-pointer" : ""}`}
-                        >
-                          {colab.foto ? <img src={colab.foto} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
-                        </div>
-                        <Badge color="#5B6B8C">Colaborador/a</Badge>
-                        <div className="flex-1 min-w-[160px]">
-                          <div className="font-medium text-sm">{colab.nombre || "(sin nombre)"}</div>
-                          <div className="text-xs text-muted">{colab.email}</div>
-                        </div>
-                        <div className="text-xs text-muted">
-                          {(colab.secciones || []).length > 0 ? `Ve: ${colab.secciones.join(", ")}` : "Sin secciones asignadas"}
-                        </div>
-                      </Card>
-                    ))}
+                    {colaboradores.map((colab) => {
+                      const diasColab = diasDesde(colab.ultimaConexion);
+                      const colabInactivaLargo = diasColab >= 30;
+                      return (
+                        <Card key={colab.id} className="flex items-center gap-3 flex-wrap !py-2.5">
+                          <div
+                            onClick={() => colab.foto && setImagenAmpliada(colab.foto)}
+                            className={`w-9 h-9 rounded-full bg-paper dark:bg-white/10 overflow-hidden flex items-center justify-center text-sm shrink-0 ${colab.foto ? "cursor-pointer" : ""}`}
+                          >
+                            {colab.foto ? <img src={colab.foto} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
+                          </div>
+                          <Badge color="#5B6B8C">Colaborador/a</Badge>
+                          <div className="flex-1 min-w-[160px]">
+                            <div className="font-medium text-sm">{colab.nombre || "(sin nombre)"}</div>
+                            <div className="text-xs text-muted">{colab.email}</div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className="text-xs text-muted w-[150px] shrink-0">
+                              <div>Registrado: {colab.creadoEn ? tiempoRelativo(colab.creadoEn) : "—"}</div>
+                              <div className={colabInactivaLargo ? "text-warn font-medium" : ""}>
+                                Última vez: {colab.ultimaConexion ? tiempoRelativo(colab.ultimaConexion) : "—"}
+                                {colabInactivaLargo && " ⚠"}
+                              </div>
+                            </div>
+                            <div className="text-xs text-muted">
+                              {(colab.secciones || []).length > 0 ? `Ve: ${colab.secciones.join(", ")}` : "Sin secciones asignadas"}
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -3925,12 +3938,10 @@ function App() {
     return () => unsub();
   }, [dataOwnerEstado.ownerUid]);
 
-  // Deja registro de "última conexión" para el panel de administración —
-  // solo desde la cuenta dueña, para no necesitar que los colaboradores
-  // también tengan permiso de escritura ahí. Si la cuenta es de antes de
-  // que existiera este panel (o si por lo que sea nunca quedó registrada
-  // al crearse), se registra sola aquí — así el robot de recordatorios
-  // también la encuentra.
+  // Deja registro de "última conexión" del CONSULTORIO para el panel de
+  // administración. Si la cuenta es de antes de que existiera este panel (o
+  // si por lo que sea nunca quedó registrada al crearse), se registra sola
+  // aquí — así el robot de recordatorios también la encuentra.
   React.useEffect(() => {
     if (!dataOwnerEstado.ownerUid || dataOwnerEstado.esColaborador || dataOwnerEstado.necesitaOnboarding) return;
     if (cuentaEstado.cargando || cargandoConfig) return;
@@ -3954,6 +3965,20 @@ function App() {
     cuentaEstado.existe,
     cargandoConfig,
   ]);
+
+  // Igual que arriba, pero la "última conexión" del/de la propio/a
+  // colaborador/a — se guarda en su fila de colaboradores/ del consultorio
+  // (mismo campo que ve el/la dueño/a y el Panel de administración). Un/a
+  // colaborador/a solo puede tocar "foto" y "ultimaConexion" de su propia
+  // fila, nunca su nombre, correo o secciones habilitadas (ver
+  // firestore.rules).
+  React.useEffect(() => {
+    if (!dataOwnerEstado.esColaborador || !dataOwnerEstado.ownerUid || !user) return;
+    db.collection("users").doc(dataOwnerEstado.ownerUid).collection("colaboradores").doc(user.uid).set(
+      { ultimaConexion: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    ).catch(() => {});
+  }, [dataOwnerEstado.esColaborador, dataOwnerEstado.ownerUid, user && user.uid]);
 
   if (!firebaseReady) return <BootWarning />;
   if (modoInvitado) return <DemoAppView onClose={() => setModoInvitado(false)} />;
