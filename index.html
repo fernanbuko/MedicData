@@ -1234,7 +1234,7 @@ function useDataOwner(user, versionOnboarding) {
     return () => { cancelado = true; };
   }, [user && user.uid, versionOnboarding]);
 
-  return estado;
+  return { ...estado, setEstado };
 }
 
 // Pantalla que ve, una sola vez, quien entra por primera vez con Google:
@@ -1481,9 +1481,13 @@ function NotificationBell() {
   );
 }
 
-function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdminApp, children }) {
+function Layout({ view, setView, seccionesVisibles, config, esColaborador, perfilColaborador, esAdminApp, children }) {
   const tabs = TODAS_LAS_SECCIONES.filter((t) => seccionesVisibles.includes(t.key));
   const iconos = { inicio: "🏠", agenda: "🗓", pacientes: "🧑‍⚕️", recetas: "📋", examenes: "🧪", config: "⚙" };
+  // Un/a colaborador/a tiene su propia foto de perfil (ver ConfigView), separada
+  // de la foto del/de la dueño/a del consultorio (config.fotoMedico) — cada quien
+  // ve la suya en "Mi perfil".
+  const miFoto = esColaborador ? (perfilColaborador && perfilColaborador.foto) : config.fotoMedico;
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
@@ -1538,8 +1542,8 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
             </button>
           )}
           <button onClick={() => setView("config")} title="Mi perfil">
-            {config.fotoMedico ? (
-              <img src={config.fotoMedico} className="w-7 h-7 rounded-full object-cover" />
+            {miFoto ? (
+              <img src={miFoto} className="w-7 h-7 rounded-full object-cover" />
             ) : (
               <div className="w-7 h-7 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
             )}
@@ -1560,8 +1564,8 @@ function Layout({ view, setView, seccionesVisibles, config, esColaborador, esAdm
             </button>
           )}
           <button onClick={() => setView("config")} title="Mi perfil" className="shrink-0">
-            {config.fotoMedico ? (
-              <img src={config.fotoMedico} className="w-8 h-8 rounded-full object-cover" />
+            {miFoto ? (
+              <img src={miFoto} className="w-8 h-8 rounded-full object-cover" />
             ) : (
               <div className="w-8 h-8 rounded-full bg-line dark:bg-white/10 flex items-center justify-center text-sm">🧑‍⚕️</div>
             )}
@@ -3052,7 +3056,7 @@ async function activarNotificaciones() {
   localStorage.setItem(CLAVE_PREFERENCIA_NOTIF, "1");
 }
 
-function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, setOscuro, onLogout }) {
+function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaboradorActualizada, user, oscuro, setOscuro, onLogout }) {
   const [nombreConsultorio, setNombreConsultorio] = React.useState(config.nombreConsultorio || "");
   const [nombreMedico, setNombreMedico] = React.useState(config.nombreMedico || "");
   const [especialidad, setEspecialidad] = React.useState(config.especialidad || "");
@@ -3065,6 +3069,9 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
   const [fotoMedico, setFotoMedico] = React.useState(config.fotoMedico || "");
   const [subiendoFotoMedico, setSubiendoFotoMedico] = React.useState(false);
   const [archivoFotoMedicoParaAjustar, setArchivoFotoMedicoParaAjustar] = React.useState(null);
+  const [fotoColaborador, setFotoColaborador] = React.useState((perfilColaborador && perfilColaborador.foto) || "");
+  const [subiendoFotoColaborador, setSubiendoFotoColaborador] = React.useState(false);
+  const [archivoFotoColaboradorParaAjustar, setArchivoFotoColaboradorParaAjustar] = React.useState(null);
   const [guardando, setGuardando] = React.useState(false);
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
@@ -3080,6 +3087,10 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
     setLogoUrl(config.logoUrl || "");
     setFotoMedico(config.fotoMedico || "");
   }, [config.nombreConsultorio, config.nombreMedico, config.especialidad, config.telefono, config.direccion, config.logoUrl, config.fotoMedico]);
+
+  React.useEffect(() => {
+    setFotoColaborador((perfilColaborador && perfilColaborador.foto) || "");
+  }, [perfilColaborador && perfilColaborador.foto]);
 
   async function guardarPerfil(e) {
     e.preventDefault();
@@ -3154,6 +3165,46 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
     setSubiendoFotoMedico(false);
   }
 
+  // Foto de perfil de un/a colaborador/a: es suya, no del consultorio — se
+  // guarda en su propio users/{uid}/meta/perfil (nunca en la config del
+  // consultorio, que solo el/la dueño/a puede editar).
+  function elegirFotoColaborador(e) {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (file) setArchivoFotoColaboradorParaAjustar(file);
+  }
+
+  async function subirFotoColaboradorAjustada(blob) {
+    setArchivoFotoColaboradorParaAjustar(null);
+    setSubiendoFotoColaborador(true);
+    const anterior = fotoColaborador;
+    try {
+      const url = await subirACloudinary(blob, `${carpetaConsultorio()}/colaboradores/${user.uid}`);
+      setFotoColaborador(url);
+      await withTimeout(
+        db.collection("users").doc(user.uid).collection("meta").doc("perfil").set(
+          { foto: url },
+          { merge: true }
+        )
+      );
+      // Se guarda también en la fila de colaboradores/ del consultorio (la
+      // misma que ve el/la dueño/a en "Mi equipo" y que se muestra en el
+      // Panel de administración) — un/a colaborador/a solo puede tocar el
+      // campo "foto" de su propia fila ahí, nunca "secciones" ni "nombre".
+      await withTimeout(
+        db.collection("users").doc(window.__dataOwnerUid).collection("colaboradores").doc(user.uid).set(
+          { foto: url },
+          { merge: true }
+        )
+      );
+      if (onFotoColaboradorActualizada) onFotoColaboradorActualizada(url);
+      marcarCloudinaryParaBorrar(anterior);
+    } catch (err) {
+      alert(err.message);
+    }
+    setSubiendoFotoColaborador(false);
+  }
+
   async function onActivarNotif() {
     setActivandoNotif(true);
     setErrorNotif("");
@@ -3199,6 +3250,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
     if (!confirmado) return;
     setEliminandoCuenta(true);
     try {
+      if (fotoColaborador) marcarCloudinaryParaBorrar(fotoColaborador);
       await withTimeout(db.collection("users").doc(window.__dataOwnerUid).collection("colaboradores").doc(user.uid).delete());
       await withTimeout(db.collection("users").doc(user.uid).collection("meta").doc("perfil").delete());
       await eliminarUsuarioDeAuth();
@@ -3247,6 +3299,28 @@ function ConfigView({ config, esColaborador, perfilColaborador, user, oscuro, se
   return (
     <div className="max-w-2xl">
       <h1 className="text-2xl font-display font-semibold mb-5">Configuración</h1>
+
+      {esColaborador && (
+        <Card className="mb-5">
+          <h2 className="font-semibold mb-3">Mi perfil</h2>
+          <div className="flex items-center gap-4">
+            <div
+              onClick={() => fotoColaborador && setImagenAmpliada(fotoColaborador)}
+              className={`w-14 h-14 rounded-full bg-line dark:bg-white/10 overflow-hidden shrink-0 flex items-center justify-center text-muted ${fotoColaborador ? "cursor-pointer" : ""}`}
+            >
+              {fotoColaborador ? <img src={fotoColaborador} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
+            </div>
+            <label className="text-sm text-accent2 cursor-pointer hover:underline">
+              {subiendoFotoColaborador ? "Subiendo…" : fotoColaborador ? "Cambiar mi foto" : "Subir mi foto"}
+              <input type="file" accept="image/*" className="hidden" onChange={elegirFotoColaborador} disabled={subiendoFotoColaborador || !cloudinaryReady} />
+            </label>
+            {!cloudinaryReady && <span className="text-xs text-faint">(configura Cloudinary para poder subir tu foto)</span>}
+          </div>
+          {archivoFotoColaboradorParaAjustar && (
+            <AjustarFotoModal file={archivoFotoColaboradorParaAjustar} redondo onCancelar={() => setArchivoFotoColaboradorParaAjustar(null)} onListo={subirFotoColaboradorAjustada} />
+          )}
+        </Card>
+      )}
 
       {!esColaborador && (
         <Card className="mb-5">
@@ -3507,7 +3581,7 @@ function ImagenLightbox({ src, onClose }) {
 // Panel de administración. Configuración queda fuera a propósito: esa
 // pantalla escribe directo en la cuenta real de quien la abre (no pasa
 // por coll()), así que no es segura de mostrar aquí.
-function DemoAppView({ onClose }) {
+function DemoAppView({ onClose, comoColaborador }) {
   // Activa el modo demo ANTES del primer render (no en un useEffect): los
   // efectos de los hijos (los useCollection de InicioView, etc.) corren
   // antes que el de este componente, así que si el flag se prendiera en
@@ -3536,7 +3610,12 @@ function DemoAppView({ onClose }) {
     logoUrl: "",
     fotoMedico: "",
   };
-  const seccionesDemo = ["inicio", "agenda", "pacientes", "recetas", "examenes"];
+  // Un/a colaborador/a de verdad no ve "Recetas" ni "Exámenes" salvo que
+  // el/la dueño/a se los habilite — se usa aquí el mismo set por defecto
+  // con el que queda una cuenta recién unida al equipo (ver unirseAEquipo),
+  // para que la vista previa sea fiel a lo que ve alguien recién invitado.
+  const seccionesDemo = comoColaborador ? ["inicio", "agenda", "pacientes", "config"] : ["inicio", "agenda", "pacientes", "recetas", "examenes"];
+  const perfilColaboradorDemo = { nombre: "Colaborador/a de ejemplo", email: "colaborador@ejemplo.com", foto: "" };
 
   function abrirVista(v) {
     setPatientIdAbierto(null);
@@ -3546,10 +3625,20 @@ function DemoAppView({ onClose }) {
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-paper dark:bg-[#0F1B2C]">
       <div className="sticky top-0 z-40 bg-ink text-paper dark:bg-accent dark:text-ink text-sm px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
-        <span>🧪 Modo demo — pacientes, citas y recetas de ejemplo. No se guardan en tu cuenta real.</span>
+        <span>
+          🧪 Modo demo{comoColaborador ? " — vista de colaborador/a" : ""} — pacientes, citas y recetas de ejemplo. No se guardan en tu cuenta real.
+        </span>
         <button onClick={cerrarDemo} className="font-medium underline shrink-0">Salir del modo demo</button>
       </div>
-      <Layout view={view} setView={abrirVista} seccionesVisibles={seccionesDemo} config={configDemo} esColaborador={false} esAdminApp={false}>
+      <Layout
+        view={view}
+        setView={abrirVista}
+        seccionesVisibles={seccionesDemo}
+        config={configDemo}
+        esColaborador={!!comoColaborador}
+        perfilColaborador={perfilColaboradorDemo}
+        esAdminApp={false}
+      >
         {view === "inicio" && <InicioView config={configDemo} setView={abrirVista} onAbrirPaciente={setPatientIdAbierto} />}
         {view === "agenda" && <AgendaView />}
         {view === "pacientes" && (
@@ -3575,7 +3664,7 @@ function PanelAdminView() {
   const [colaboradoresPorDueno, setColaboradoresPorDueno] = React.useState({});
   const [imagenAmpliada, setImagenAmpliada] = React.useState(null);
   const [estadoRobot, setEstadoRobot] = React.useState(null);
-  const [mostrarDemo, setMostrarDemo] = React.useState(false);
+  const [modoDemoVista, setModoDemoVista] = React.useState(null); // null | "dueno" | "colaborador"
 
   React.useEffect(() => {
     const unsub = db
@@ -3656,9 +3745,14 @@ function PanelAdminView() {
     <div>
       <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
         <h1 className="text-2xl font-display font-semibold">Panel de administración</h1>
-        <SecondaryButton className="!px-3 !py-1.5 !text-xs" onClick={() => setMostrarDemo(true)}>
-          🧪 Ver demo
-        </SecondaryButton>
+        <div className="flex gap-2 flex-wrap">
+          <SecondaryButton className="!px-3 !py-1.5 !text-xs" onClick={() => setModoDemoVista("dueno")}>
+            🧪 Ver demo
+          </SecondaryButton>
+          <SecondaryButton className="!px-3 !py-1.5 !text-xs" onClick={() => setModoDemoVista("colaborador")}>
+            🧪 Ver como colaborador/a
+          </SecondaryButton>
+        </div>
       </div>
       <p className="text-muted text-sm mb-2">
         {cuentas.length} consultorio{cuentas.length === 1 ? "" : "s"} registrado{cuentas.length === 1 ? "" : "s"} en MedicData
@@ -3720,6 +3814,12 @@ function PanelAdminView() {
                   <div className="ml-4 sm:ml-8 mt-1.5 space-y-1.5 border-l-2 border-line dark:border-white/10 pl-3">
                     {colaboradores.map((colab) => (
                       <Card key={colab.id} className="flex items-center gap-3 flex-wrap !py-2.5">
+                        <div
+                          onClick={() => colab.foto && setImagenAmpliada(colab.foto)}
+                          className={`w-9 h-9 rounded-full bg-paper dark:bg-white/10 overflow-hidden flex items-center justify-center text-sm shrink-0 ${colab.foto ? "cursor-pointer" : ""}`}
+                        >
+                          {colab.foto ? <img src={colab.foto} className="w-full h-full object-cover" /> : "🧑‍⚕️"}
+                        </div>
                         <Badge color="#5B6B8C">Colaborador/a</Badge>
                         <div className="flex-1 min-w-[160px]">
                           <div className="font-medium text-sm">{colab.nombre || "(sin nombre)"}</div>
@@ -3738,7 +3838,9 @@ function PanelAdminView() {
         </div>
       )}
       {imagenAmpliada && <ImagenLightbox src={imagenAmpliada} onClose={() => setImagenAmpliada(null)} />}
-      {mostrarDemo && <DemoAppView onClose={() => setMostrarDemo(false)} />}
+      {modoDemoVista && (
+        <DemoAppView comoColaborador={modoDemoVista === "colaborador"} onClose={() => setModoDemoVista(null)} />
+      )}
     </div>
   );
 }
@@ -3886,6 +3988,14 @@ function App() {
     setView(v);
   }
 
+  // Refleja al instante, en el avatar de "Mi perfil", la foto que un/a
+  // colaborador/a acaba de subir en Configuración — sin esto, se vería recién
+  // al volver a iniciar sesión (perfilColaborador se lee una sola vez al
+  // entrar, no con un listener en vivo).
+  function actualizarFotoColaboradorLocal(foto) {
+    dataOwnerEstado.setEstado((prev) => ({ ...prev, perfilColaborador: { ...(prev.perfilColaborador || {}), foto } }));
+  }
+
   return (
     <>
     <GlobalDialogHost />
@@ -3895,6 +4005,7 @@ function App() {
       seccionesVisibles={seccionesVisibles}
       config={cargandoConfig ? {} : config}
       esColaborador={dataOwnerEstado.esColaborador}
+      perfilColaborador={dataOwnerEstado.perfilColaborador}
       esAdminApp={esAdminApp}
     >
       {view === "inicio" && (
@@ -3915,6 +4026,7 @@ function App() {
           config={config}
           esColaborador={dataOwnerEstado.esColaborador}
           perfilColaborador={dataOwnerEstado.perfilColaborador}
+          onFotoColaboradorActualizada={actualizarFotoColaboradorLocal}
           user={user}
           oscuro={oscuro}
           setOscuro={setOscuro}

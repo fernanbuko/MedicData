@@ -18,7 +18,16 @@ service cloud.firestore {
           request.auth.token.email == "fernandotapia7@gmail.com"
         );
         allow create: if request.auth != null && request.auth.uid == colabId;
-        allow update: if request.auth != null && request.auth.uid == ownerUid;
+        // El/la dueño/a puede cambiar cualquier campo (por ejemplo, las
+        // secciones que ve cada colaborador/a). El/la propio/a colaborador/a
+        // solo puede actualizar SU foto de perfil — nunca su nombre, correo
+        // o las secciones que tiene habilitadas, eso lo controla el/la
+        // dueño/a.
+        allow update: if request.auth != null && (
+          request.auth.uid == ownerUid ||
+          (request.auth.uid == colabId &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(["foto"]))
+        );
         // Además del/de la dueño/a, un/a colaborador/a puede borrar SU
         // PROPIA fila para salir del equipo (ver "Eliminar cuenta" en
         // Configuración) — no puede tocar la de nadie más.
