@@ -50,6 +50,12 @@ if (!cloudinaryBorrarListo) {
   console.log("ℹ️ CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET no están configurados: las fotos borradas en la app se van a quedar pendientes de borrar en Cloudinary hasta que se agreguen (ver README).");
 }
 
+// Debe ser EXACTAMENTE el mismo correo que ADMIN_EMAIL en index.html y que
+// las dos líneas "fernandotapia7@gmail.com" en firestore.rules — identifica
+// la cuenta de quien administra MedicData, para avisarle cuando se registra
+// un consultorio nuevo en la app.
+const ADMIN_EMAIL = "fernandotapia7@gmail.com";
+
 // Zona horaria del consultorio, como desfase respecto a UTC en horas.
 // Ecuador = -5. Cámbialo si tu consultorio está en otro país.
 const DESFASE_HORAS = -5;
@@ -305,7 +311,69 @@ async function purgarPapeleraVencida(ownerUid) {
   }
 }
 
-async function revisarConsultorio(ownerUid, cuentaActual) {
+// Avisa al/a la dueño/a del consultorio cuando un/a colaborador/a nuevo/a se
+// une a su equipo (con el código de invitación, ver AceptarInvitacion en
+// index.html). Se compara creadoEn contra la corrida ANTERIOR del robot
+// (no contra "ahora") para no mandar el aviso dos veces, y sobre todo para
+// que la primera vez que se despliega esta función no se dispare una
+// ráfaga de avisos por TODOS los colaboradores que ya existían de antes.
+async function avisarNuevosColaboradores(ownerUid, tokens, ultimaCorridaAnterior) {
+  if (!ultimaCorridaAnterior) return; // primera corrida del robot: no hay "antes" con qué comparar
+  let snap;
+  try {
+    snap = await db
+      .collection("users")
+      .doc(ownerUid)
+      .collection("colaboradores")
+      .where("creadoEn", ">", ultimaCorridaAnterior)
+      .get();
+  } catch (e) {
+    console.error("   ❌ Error revisando colaboradores nuevos:", e.message);
+    return;
+  }
+  for (const doc of snap.docs) {
+    const colab = doc.data();
+    await enviarNotificacion(
+      ownerUid,
+      tokens,
+      "Nuevo colaborador/a en tu equipo",
+      `${colab.nombre || colab.email || "Alguien"} se unió a tu consultorio.`
+    );
+  }
+}
+
+// Avisa a quien administra MedicData (ver ADMIN_EMAIL arriba) cuando se
+// registra un consultorio nuevo en la app. Misma idea que arriba: compara
+// contra la corrida ANTERIOR del robot para no repetir el aviso ni
+// disparar una ráfaga con las cuentas que ya existían al desplegar esto.
+async function avisarCuentaAdminDeNuevosConsultorios(cuentasSnap, ultimaCorridaAnterior) {
+  if (!ultimaCorridaAnterior) return;
+  const nuevas = cuentasSnap.docs.filter((doc) => {
+    const creadoEn = doc.data().creadoEn;
+    return creadoEn && creadoEn.toMillis() > ultimaCorridaAnterior.toMillis();
+  });
+  if (nuevas.length === 0) return;
+
+  const adminDoc = cuentasSnap.docs.find((doc) => doc.data().email === ADMIN_EMAIL);
+  if (!adminDoc) return; // quien administra no tiene su propia cuenta registrada: no hay dónde avisarle
+
+  const adminUid = adminDoc.id;
+  const configDoc = await db.collection("users").doc(adminUid).collection("data").doc("config").get();
+  const tokens = configDoc.exists ? configDoc.data().fcmTokens || [] : [];
+
+  for (const doc of nuevas) {
+    if (doc.id === adminUid) continue; // no avisarle de su propia cuenta
+    const cuenta = doc.data();
+    await enviarNotificacion(
+      adminUid,
+      tokens,
+      "Nuevo consultorio registrado",
+      `${cuenta.nombreConsultorio || cuenta.nombreMedico || cuenta.email || "Un consultorio"} se registró en MedicData.`
+    );
+  }
+}
+
+async function revisarConsultorio(ownerUid, cuentaActual, ultimaCorridaAnterior) {
   const configDoc = await db.collection("users").doc(ownerUid).collection("data").doc("config").get();
   const config = configDoc.exists ? configDoc.data() : {};
   await sincronizarResumenCuenta(ownerUid, config, cuentaActual);
@@ -318,6 +386,7 @@ async function revisarConsultorio(ownerUid, cuentaActual) {
   // súmalos aquí. La notificación EN LA APP sí queda disponible para
   // todo el equipo, porque vive en los datos compartidos del consultorio.)
   const tokens = config.fcmTokens || [];
+  await avisarNuevosColaboradores(ownerUid, tokens, ultimaCorridaAnterior);
 
   const hoy = hoyComoTexto();
   const ayer = ayerComoTexto();
@@ -402,6 +471,13 @@ async function marcarCorridaDelRobot(cuentasRevisadas) {
 
 async function main() {
   console.log("🔎 Buscando consultorios registrados…");
+  // Se lee ANTES de que marcarCorridaDelRobot() la sobreescriba al final —
+  // es el límite que usan avisarNuevosColaboradores/
+  // avisarCuentaAdminDeNuevosConsultorios para saber qué es "nuevo desde la
+  // última vez que corrió el robot" (ver esas funciones más abajo).
+  const estadoDoc = await db.collection("sistemaRobot").doc("estado").get();
+  const ultimaCorridaAnterior = estadoDoc.exists ? estadoDoc.data().ultimaCorrida : null;
+
   // OJO: nunca escribimos nada directo en "users/{uid}" (solo en sus
   // subcolecciones, como "pacientes" o "citas"), así que ese documento
   // nunca "existe" para Firestore y db.collection("users").get() siempre
@@ -410,6 +486,9 @@ async function main() {
   // la app), así que la usamos como fuente de verdad aquí también.
   const cuentasSnap = await db.collection("cuentasRegistradas").get();
   console.log(`   ${cuentasSnap.size} cuenta(s) encontrada(s).`);
+
+  await avisarCuentaAdminDeNuevosConsultorios(cuentasSnap, ultimaCorridaAnterior);
+
   for (const cuentaDoc of cuentasSnap.docs) {
     if (cuentaDoc.data().eliminada) {
       try {
@@ -424,7 +503,7 @@ async function main() {
       continue;
     }
     try {
-      await revisarConsultorio(cuentaDoc.id, cuentaDoc.data());
+      await revisarConsultorio(cuentaDoc.id, cuentaDoc.data(), ultimaCorridaAnterior);
     } catch (e) {
       console.error(`   ❌ Error revisando ${cuentaDoc.id}:`, e.message);
     }

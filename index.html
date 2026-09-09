@@ -3381,6 +3381,13 @@ function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaborado
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
   const [activandoNotif, setActivandoNotif] = React.useState(false);
+  // El botón debía decir siempre "Activar notificaciones" aunque ya
+  // estuvieran activas, porque nada leía CLAVE_PREFERENCIA_NOTIF (solo se
+  // escribía). Se calcula al cargar combinando el permiso real del
+  // navegador (por si lo revocaron después) con la preferencia guardada.
+  const [notifActivas, setNotifActivas] = React.useState(
+    () => typeof Notification !== "undefined" && Notification.permission === "granted" && localStorage.getItem(CLAVE_PREFERENCIA_NOTIF) === "1"
+  );
   const [eliminandoCuenta, setEliminandoCuenta] = React.useState(false);
 
   React.useEffect(() => {
@@ -3515,6 +3522,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaborado
     setErrorNotif("");
     try {
       await activarNotificaciones();
+      setNotifActivas(true);
     } catch (err) {
       setErrorNotif(err.message);
     }
@@ -3708,7 +3716,11 @@ function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaborado
       <Card className="mb-5">
         <h2 className="font-semibold mb-2">Notificaciones push</h2>
         <p className="text-sm text-muted mb-3">Recibe un aviso en el celular cuando falte poco para una cita.</p>
-        <SecondaryButton onClick={onActivarNotif} disabled={activandoNotif}>{activandoNotif ? "Activando…" : "Activar notificaciones"}</SecondaryButton>
+        {notifActivas ? (
+          <p className="text-sm">🔔 Notificaciones activadas en este dispositivo.</p>
+        ) : (
+          <SecondaryButton onClick={onActivarNotif} disabled={activandoNotif}>{activandoNotif ? "Activando…" : "Activar notificaciones"}</SecondaryButton>
+        )}
         {errorNotif && <p className="text-warn text-sm mt-2">{errorNotif}</p>}
       </Card>
 
