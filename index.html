@@ -519,7 +519,12 @@ function generarDatosDemo() {
   };
 }
 
-function useCollection(name, { orderByField, direction = "asc", enabled = true } = {}) {
+// incluirEliminados: por default, cualquier documento marcado con
+// eliminadoEn (ver marcarEliminado / la Papelera en Configuración) se
+// filtra aquí mismo, en un solo lugar, así que ningún listado de la app
+// tiene que acordarse de excluirlos por su cuenta. Se pasa incluirEliminados
+// true SOLO desde la propia Papelera, para poder mostrarlos y restaurarlos.
+function useCollection(name, { orderByField, direction = "asc", enabled = true, incluirEliminados = false } = {}) {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
@@ -536,7 +541,9 @@ function useCollection(name, { orderByField, direction = "asc", enabled = true }
     if (orderByField) ref = ref.orderBy(orderByField, direction);
     const unsub = ref.onSnapshot(
       (snap) => {
-        setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        let docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        if (!incluirEliminados) docs = docs.filter((d) => !d.eliminadoEn);
+        setItems(docs);
         setLoading(false);
       },
       (err) => {
@@ -545,7 +552,7 @@ function useCollection(name, { orderByField, direction = "asc", enabled = true }
       }
     );
     return () => unsub();
-  }, [name, orderByField, direction, enabled, window.__dataOwnerUid]);
+  }, [name, orderByField, direction, enabled, incluirEliminados, window.__dataOwnerUid]);
   return { items, loading };
 }
 
@@ -630,6 +637,23 @@ async function marcarCarpetaCloudinaryParaBorrar(carpeta) {
   } catch (e) {
     console.error("No se pudo encolar el borrado de la carpeta en Cloudinary:", e);
   }
+}
+
+// -----------------------------------------------------------------------
+// Papelera: "Eliminar" en pacientes, consultas, recetas, exámenes y fotos
+// no borra nada de una — solo marca el registro con eliminadoEn (useCollection
+// ya lo filtra por default, así que desaparece de toda la app normal) y
+// queda guardado 30 días en la Papelera (Configuración), por si fue un
+// error. Los archivos de Cloudinary NUNCA se tocan en este momento —
+// recién se borran de verdad cuando el registro se elimina para siempre
+// (a mano desde la Papelera, o solo, pasados los 30 días, por el robot de
+// recordatorios). Así, mientras algo esté en la Papelera, restaurarlo
+// recupera también sus fotos/archivos intactos.
+async function marcarEliminado(coleccion, id) {
+  await actualizarDoc(coleccion, id, { eliminadoEn: firebase.firestore.FieldValue.serverTimestamp() });
+}
+async function restaurarDeLaPapelera(coleccion, id) {
+  await actualizarDoc(coleccion, id, { eliminadoEn: firebase.firestore.FieldValue.delete() });
 }
 // -----------------------------------------------------------------------
 // Piezas de interfaz reutilizables
@@ -1989,9 +2013,8 @@ function FotosDePaciente({ paciente, fotos }) {
   const [indiceAbierto, setIndiceAbierto] = React.useState(null);
 
   async function eliminarFoto(foto) {
-    if (!(await pedirConfirmacion("¿Eliminar esta foto? No se puede deshacer.", { textoConfirmar: "Eliminar", peligro: true }))) return;
-    await borrarDoc("fotos", foto.id);
-    marcarCloudinaryParaBorrar(foto.url);
+    if (!(await pedirConfirmacion("¿Eliminar esta foto? Pasa a la Papelera (Configuración) por 30 días antes de borrarse para siempre.", { textoConfirmar: "Eliminar", peligro: true }))) return;
+    await marcarEliminado("fotos", foto.id);
     setIndiceAbierto(null);
   }
 
@@ -2046,14 +2069,13 @@ function PatientDetail({ patientId, onVolver, config }) {
 
   async function eliminarPaciente() {
     const confirmado = await pedirConfirmacion(
-      `¿Eliminar a ${paciente.nombre}? Se borra su ficha y sus fotos/archivos guardados; las consultas, recetas y exámenes que ya tiene guardados quedan en el sistema pero ya no se van a poder ver desde su ficha. Esta acción no se puede deshacer.`,
+      `¿Eliminar a ${paciente.nombre}? Pasa a la Papelera (Configuración) por 30 días, por si fue un error — mientras tanto, las consultas, recetas y exámenes que ya tiene guardados no se van a poder ver desde su ficha. Pasados los 30 días (o si la eliminas para siempre desde la Papelera antes), se borra junto con sus fotos y archivos, sin poder deshacerse.`,
       { textoConfirmar: "Eliminar", peligro: true }
     );
     if (!confirmado) return;
     setEliminando(true);
     try {
-      await borrarDoc("pacientes", paciente.id);
-      marcarCarpetaCloudinaryParaBorrar(carpetaPaciente(paciente.id, paciente.nombre));
+      await marcarEliminado("pacientes", paciente.id);
       onVolver();
     } catch (err) {
       alert(err.message);
@@ -2221,18 +2243,29 @@ function ConsultaForm({ paciente, citaId, onClose, onSaved }) {
   );
 }
 
+async function eliminarConsulta(consulta) {
+  if (!(await pedirConfirmacion(
+    `¿Eliminar la consulta del ${formatFechaHora(consulta.fecha, consulta.hora)}? Pasa a la Papelera (Configuración) por 30 días antes de borrarse para siempre.`,
+    { textoConfirmar: "Eliminar", peligro: true }
+  ))) return;
+  await marcarEliminado("consultas", consulta.id);
+}
+
 function ConsultaCard({ consulta }) {
   const [abierta, setAbierta] = React.useState(false);
   const imc = calcularIMC(consulta.peso, consulta.talla);
   return (
     <Card>
-      <button className="w-full text-left flex items-center justify-between gap-2" onClick={() => setAbierta((v) => !v)}>
-        <div>
-          <div className="text-xs text-muted">{formatFechaHora(consulta.fecha, consulta.hora)}</div>
-          <div className="font-medium">{consulta.motivoConsulta}</div>
-        </div>
-        <span className="text-faint">{abierta ? "−" : "+"}</span>
-      </button>
+      <div className="flex items-start justify-between gap-2">
+        <button className="flex-1 min-w-0 text-left flex items-center justify-between gap-2" onClick={() => setAbierta((v) => !v)}>
+          <div>
+            <div className="text-xs text-muted">{formatFechaHora(consulta.fecha, consulta.hora)}</div>
+            <div className="font-medium">{consulta.motivoConsulta}</div>
+          </div>
+          <span className="text-faint shrink-0">{abierta ? "−" : "+"}</span>
+        </button>
+        <SecondaryButton className="!px-2.5 !py-1.5 !text-xs !text-warn shrink-0" onClick={() => eliminarConsulta(consulta)}>Eliminar</SecondaryButton>
+      </div>
       {abierta && (
         <div className="mt-3 pt-3 border-t border-line dark:border-white/10 text-sm space-y-2">
           {consulta.sintomas && <p><span className="font-semibold">Síntomas:</span> {consulta.sintomas}</p>}
@@ -2273,12 +2306,11 @@ function medicamentoVacio() {
 // después de guardar una edición que quitó alguna foto.
 async function eliminarReceta(r) {
   const confirmado = await pedirConfirmacion(
-    `¿Eliminar la receta de ${formatFecha(r.fecha)}${r.diagnostico ? ` (${r.diagnostico})` : ""}? No se puede deshacer.`,
+    `¿Eliminar la receta de ${formatFecha(r.fecha)}${r.diagnostico ? ` (${r.diagnostico})` : ""}? Pasa a la Papelera (Configuración) por 30 días antes de borrarse para siempre.`,
     { textoConfirmar: "Eliminar", peligro: true }
   );
   if (!confirmado) return;
-  (r.fotos || []).forEach((url) => marcarCloudinaryParaBorrar(url));
-  await borrarDoc("recetas", r.id);
+  await marcarEliminado("recetas", r.id);
 }
 
 function RecetaForm({ paciente, receta, onClose, onSaved }) {
@@ -2724,6 +2756,14 @@ function ExamenForm({ paciente, onClose, onSaved }) {
   );
 }
 
+async function eliminarExamen(e) {
+  if (!(await pedirConfirmacion(
+    `¿Eliminar el examen "${e.nombreExamen}"? Pasa a la Papelera (Configuración) por 30 días antes de borrarse para siempre.`,
+    { textoConfirmar: "Eliminar", peligro: true }
+  ))) return;
+  await marcarEliminado("examenes", e.id);
+}
+
 function TarjetaExamen({ e }) {
   const esImagen = e.archivoUrl && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(e.archivoUrl);
   return (
@@ -2733,7 +2773,10 @@ function TarjetaExamen({ e }) {
           <div className="text-xs text-muted">{formatFecha(e.fecha)} · {e.tipo}</div>
           <div className="font-medium">{e.nombreExamen}</div>
         </div>
-        {e.archivoUrl && <a href={e.archivoUrl} target="_blank" rel="noreferrer" className="text-sm text-accent2 hover:underline shrink-0">Ver archivo</a>}
+        <div className="flex gap-1 items-center shrink-0">
+          {e.archivoUrl && <a href={e.archivoUrl} target="_blank" rel="noreferrer" className="text-sm text-accent2 hover:underline">Ver archivo</a>}
+          <SecondaryButton className="!px-2.5 !py-1.5 !text-xs !text-warn" onClick={() => eliminarExamen(e)}>Eliminar</SecondaryButton>
+        </div>
       </div>
       {e.resultado && <p className="text-sm mt-2 whitespace-pre-wrap">{e.resultado}</p>}
       {esImagen && <img src={e.archivoUrl} className="mt-2 rounded-lg max-h-56 object-cover" />}
@@ -3185,6 +3228,138 @@ async function activarNotificaciones() {
   localStorage.setItem(CLAVE_PREFERENCIA_NOTIF, "1");
 }
 
+// -----------------------------------------------------------------------
+// Papelera: lista lo que esté marcado con eliminadoEn en cada una de estas
+// cinco colecciones (ver marcarEliminado) y deja restaurarlo o borrarlo
+// para siempre de una vez, sin esperar los 30 días a que lo haga el robot.
+// -----------------------------------------------------------------------
+function resumenPapelera(coleccion, item) {
+  switch (coleccion) {
+    case "pacientes":
+      return { icono: "🧑", titulo: item.nombre || "(sin nombre)", subtitulo: "Ficha de paciente (con su historial, recetas y exámenes)" };
+    case "consultas":
+      return { icono: "📄", titulo: item.patientName || "(paciente)", subtitulo: `Consulta del ${formatFechaHora(item.fecha, item.hora)}${item.motivoConsulta ? ` — ${item.motivoConsulta}` : ""}` };
+    case "recetas":
+      return { icono: "📋", titulo: item.patientName || "(paciente)", subtitulo: `Receta del ${formatFecha(item.fecha)}${item.diagnostico ? ` — ${item.diagnostico}` : ""}` };
+    case "examenes":
+      return { icono: "🧪", titulo: item.patientName || "(paciente)", subtitulo: `${item.nombreExamen || "Examen"} — ${formatFecha(item.fecha)}` };
+    case "fotos":
+      return { icono: "🖼", titulo: item.patientName || "(paciente)", subtitulo: `Foto del ${formatFecha(item.fecha)}${item.nota ? ` — ${item.nota}` : ""}` };
+    default:
+      return { icono: "🗑", titulo: "Registro", subtitulo: "" };
+  }
+}
+
+// Borra de verdad, para siempre: recién en este momento se limpian los
+// archivos de Cloudinary (nunca antes, para que restaurar desde la
+// Papelera siempre recupere las fotos/archivos intactos).
+async function purgarParaSiempre(coleccion, item) {
+  const confirmado = await pedirConfirmacion(
+    "¿Eliminar esto para siempre? No se puede deshacer.",
+    { textoConfirmar: "Eliminar para siempre", peligro: true }
+  );
+  if (!confirmado) return;
+  if (coleccion === "pacientes") {
+    marcarCarpetaCloudinaryParaBorrar(carpetaPaciente(item.id, item.nombre));
+  } else if (coleccion === "recetas") {
+    (item.fotos || []).forEach((url) => marcarCloudinaryParaBorrar(url));
+  } else if (coleccion === "examenes") {
+    if (item.archivoUrl) marcarCloudinaryParaBorrar(item.archivoUrl);
+  } else if (coleccion === "fotos") {
+    if (item.url) marcarCloudinaryParaBorrar(item.url);
+  }
+  await borrarDoc(coleccion, item.id);
+}
+
+function FilaPapelera({ coleccion, item }) {
+  const { icono, titulo, subtitulo } = resumenPapelera(coleccion, item);
+  const [ocupado, setOcupado] = React.useState(false);
+
+  async function restaurar() {
+    setOcupado(true);
+    try {
+      await restaurarDeLaPapelera(coleccion, item.id);
+    } catch (err) {
+      alert(err.message);
+      setOcupado(false);
+    }
+  }
+
+  async function eliminarParaSiempre() {
+    setOcupado(true);
+    try {
+      await purgarParaSiempre(coleccion, item);
+    } catch (err) {
+      alert(err.message);
+    }
+    setOcupado(false);
+  }
+
+  return (
+    <div className={`flex items-center gap-3 border border-line dark:border-white/10 rounded-lg p-3 flex-wrap ${ocupado ? "opacity-50 pointer-events-none" : ""}`}>
+      <span className="text-lg shrink-0">{icono}</span>
+      <div className="flex-1 min-w-[180px]">
+        <div className="font-medium text-sm">{titulo}</div>
+        <div className="text-xs text-muted">{subtitulo}</div>
+        <div className="text-xs text-faint mt-0.5">Eliminado {item.eliminadoEn ? tiempoRelativo(item.eliminadoEn) : "—"}</div>
+      </div>
+      <div className="flex gap-2 shrink-0">
+        <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={restaurar}>Restaurar</SecondaryButton>
+        <SecondaryButton className="!px-2.5 !py-1.5 !text-xs !text-warn" onClick={eliminarParaSiempre}>Eliminar para siempre</SecondaryButton>
+      </div>
+    </div>
+  );
+}
+
+const COLECCIONES_PAPELERA = [
+  ["pacientes", "Pacientes"],
+  ["consultas", "Consultas"],
+  ["recetas", "Recetas"],
+  ["examenes", "Exámenes"],
+  ["fotos", "Fotos"],
+];
+
+function PapeleraView({ onClose }) {
+  usarNavegacionAtras(true, onClose);
+  const { items: pacientesElim, loading: lp } = useCollection("pacientes", { incluirEliminados: true });
+  const { items: consultasElim, loading: lc } = useCollection("consultas", { incluirEliminados: true });
+  const { items: recetasElim, loading: lr } = useCollection("recetas", { incluirEliminados: true });
+  const { items: examenesElim, loading: le } = useCollection("examenes", { incluirEliminados: true });
+  const { items: fotosElim, loading: lf } = useCollection("fotos", { incluirEliminados: true });
+  const loading = lp || lc || lr || le || lf;
+
+  const datos = { pacientes: pacientesElim, consultas: consultasElim, recetas: recetasElim, examenes: examenesElim, fotos: fotosElim };
+  const grupos = COLECCIONES_PAPELERA.map(([coleccion, label]) => [coleccion, label, (datos[coleccion] || []).filter((x) => x.eliminadoEn)]);
+  const total = grupos.reduce((n, [, , items]) => n + items.length, 0);
+
+  return (
+    <Modal title="Papelera" onClose={onClose} wide>
+      <p className="text-sm text-muted mb-4">
+        Lo que elimines desde cualquier parte de la app queda guardado aquí 30 días antes de borrarse para
+        siempre — tiempo de sobra para recuperarlo si fue un error.
+      </p>
+      {loading ? (
+        <Spinner />
+      ) : total === 0 ? (
+        <EmptyState icon="🗑" title="La Papelera está vacía" />
+      ) : (
+        <div className="space-y-5">
+          {grupos.map(([coleccion, label, items]) =>
+            items.length === 0 ? null : (
+              <div key={coleccion}>
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">{label} ({items.length})</div>
+                <div className="space-y-2">
+                  {items.map((item) => <FilaPapelera key={item.id} coleccion={coleccion} item={item} />)}
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaboradorActualizada, user, oscuro, setOscuro, onLogout }) {
   const [nombreConsultorio, setNombreConsultorio] = React.useState(config.nombreConsultorio || "");
   const [nombreMedico, setNombreMedico] = React.useState(config.nombreMedico || "");
@@ -3201,6 +3376,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaborado
   const [fotoColaborador, setFotoColaborador] = React.useState((perfilColaborador && perfilColaborador.foto) || "");
   const [subiendoFotoColaborador, setSubiendoFotoColaborador] = React.useState(false);
   const [archivoFotoColaboradorParaAjustar, setArchivoFotoColaboradorParaAjustar] = React.useState(null);
+  const [mostrarPapelera, setMostrarPapelera] = React.useState(false);
   const [guardando, setGuardando] = React.useState(false);
   const [guardado, setGuardado] = React.useState(false);
   const [errorNotif, setErrorNotif] = React.useState("");
@@ -3518,6 +3694,17 @@ function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaborado
         </Card>
       )}
 
+      {!esColaborador && (
+        <Card className="mb-5">
+          <h2 className="font-semibold mb-1">Papelera</h2>
+          <p className="text-sm text-muted mb-3">
+            Pacientes, consultas, recetas, exámenes o fotos que hayas eliminado quedan guardados aquí 30 días antes
+            de borrarse para siempre — por si fue un error.
+          </p>
+          <SecondaryButton onClick={() => setMostrarPapelera(true)}>Ver papelera</SecondaryButton>
+        </Card>
+      )}
+
       <Card className="mb-5">
         <h2 className="font-semibold mb-2">Notificaciones push</h2>
         <p className="text-sm text-muted mb-3">Recibe un aviso en el celular cuando falte poco para una cita.</p>
@@ -3561,6 +3748,7 @@ function ConfigView({ config, esColaborador, perfilColaborador, onFotoColaborado
         </Card>
       )}
       {imagenAmpliada && <ImagenLightbox src={imagenAmpliada} onClose={() => setImagenAmpliada(null)} />}
+      {mostrarPapelera && <PapeleraView onClose={() => setMostrarPapelera(false)} />}
     </div>
   );
 }

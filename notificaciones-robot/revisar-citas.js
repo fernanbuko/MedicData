@@ -231,11 +231,86 @@ async function procesarPendientesDeCloudinary(ownerUid) {
   }
 }
 
+// Deja el nombre listo para usarse como parte de un nombre de carpeta de
+// Cloudinary — copia exacta de sanitizarNombreCarpeta en index.html, para
+// que la carpeta calculada aquí sea siempre la misma que subió la app.
+function sanitizarNombreCarpeta(nombre) {
+  return (
+    (nombre || "sin_nombre")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "") // quita tildes
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 40) || "sin_nombre"
+  );
+}
+function carpetaPaciente(ownerUid, patientId, nombrePaciente) {
+  return `medicdata/${ownerUid}/pacientes/${patientId}_${sanitizarNombreCarpeta(nombrePaciente)}`;
+}
+
+// Papelera (ver marcarEliminado/restaurarDeLaPapelera en index.html):
+// "Eliminar" desde la app solo MARCA el registro con eliminadoEn, para
+// poder recuperarlo hasta por 30 días desde la Papelera en Configuración.
+// Pasado ese plazo, se borra aquí para siempre — Firestore y Cloudinary —
+// sin que nadie tenga que acordarse de vaciarla a mano.
+const TREINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
+const COLECCIONES_PAPELERA = ["pacientes", "consultas", "recetas", "examenes", "fotos"];
+
+async function borrarUnaUrlDeCloudinary(url) {
+  const datos = datosCloudinaryDesdeUrl(url);
+  if (!datos) return;
+  await borrarDeCloudinary([datos.publicId], datos.resourceType);
+}
+
+// Limpia Cloudinary de un registro puntual de la papelera antes de
+// borrarlo de Firestore — cada colección guarda sus archivos en un campo
+// distinto (ver index.html): pacientes usa toda su carpeta (fotos,
+// exámenes, todo junto), recetas una lista de fotos, exámenes un solo
+// archivo adjunto, fotos una sola url. Consultas no tiene archivos
+// propios, así que no hace nada especial ahí.
+async function limpiarCloudinaryDeRegistro(ownerUid, coleccion, id, data) {
+  try {
+    if (coleccion === "pacientes") {
+      await borrarCarpetaDeCloudinary(carpetaPaciente(ownerUid, id, data.nombre));
+    } else if (coleccion === "recetas" && Array.isArray(data.fotos)) {
+      for (const url of data.fotos) await borrarUnaUrlDeCloudinary(url);
+    } else if (coleccion === "examenes" && data.archivoUrl) {
+      await borrarUnaUrlDeCloudinary(data.archivoUrl);
+    } else if (coleccion === "fotos" && data.url) {
+      await borrarUnaUrlDeCloudinary(data.url);
+    }
+  } catch (e) {
+    console.error(`      ❌ Error limpiando Cloudinary de ${coleccion}/${id}:`, e.message);
+  }
+}
+
+async function purgarPapeleraVencida(ownerUid) {
+  if (!cloudinaryBorrarListo) return; // sin clave, mejor esperar a poder limpiar Cloudinary también
+  const limite = new Date(Date.now() - TREINTA_DIAS_MS);
+  for (const coleccion of COLECCIONES_PAPELERA) {
+    let snap;
+    try {
+      snap = await db.collection("users").doc(ownerUid).collection(coleccion).where("eliminadoEn", "<", limite).get();
+    } catch (e) {
+      console.error(`   ❌ Error leyendo la papelera de "${coleccion}":`, e.message);
+      continue;
+    }
+    if (snap.empty) continue;
+    for (const doc of snap.docs) {
+      await limpiarCloudinaryDeRegistro(ownerUid, coleccion, doc.id, doc.data());
+      await doc.ref.delete().catch((e) => console.error(`      ❌ Error borrando ${coleccion}/${doc.id}:`, e.message));
+    }
+    console.log(`   🗑 ${snap.size} registro(s) de "${coleccion}" purgado(s) de la papelera (30+ días).`);
+  }
+}
+
 async function revisarConsultorio(ownerUid, cuentaActual) {
   const configDoc = await db.collection("users").doc(ownerUid).collection("data").doc("config").get();
   const config = configDoc.exists ? configDoc.data() : {};
   await sincronizarResumenCuenta(ownerUid, config, cuentaActual);
   await procesarPendientesDeCloudinary(ownerUid);
+  await purgarPapeleraVencida(ownerUid);
   // (Los colaboradores no tienen tokens propios en este esquema simple:
   // el push llega a los dispositivos donde inició sesión la cuenta dueña
   // del consultorio. Si quieres notificar también a cada colaborador por
