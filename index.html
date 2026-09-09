@@ -2260,24 +2260,92 @@ function ConsultaCard({ consulta }) {
 }
 // -----------------------------------------------------------------------
 // Recetas: uno o más medicamentos por receta, con dosis/vía/frecuencia/
-// duración. Se puede imprimir o compartir como texto (WhatsApp, correo…).
+// duración, y opcionalmente fotos (por ejemplo, una receta anterior o un
+// resultado que motivó el tratamiento). Se puede editar, eliminar,
+// imprimir o compartir como texto (WhatsApp, correo…).
 // -----------------------------------------------------------------------
 function medicamentoVacio() {
   return { nombre: "", dosis: "", via: "Oral", frecuencia: "", duracion: "", indicaciones: "" };
 }
 
-function RecetaForm({ paciente, onClose, onSaved }) {
-  usarNavegacionAtras(true, onClose);
-  const [fecha, setFecha] = React.useState(hoyISO());
-  const [diagnostico, setDiagnostico] = React.useState("");
-  const [notas, setNotas] = React.useState("");
-  const [medicamentos, setMedicamentos] = React.useState([medicamentoVacio()]);
+// Borra de verdad, en Cloudinary, todas las fotos de una receta — se usa
+// tanto al eliminar la receta completa como (con la lista que sobra)
+// después de guardar una edición que quitó alguna foto.
+async function eliminarReceta(r) {
+  const confirmado = await pedirConfirmacion(
+    `¿Eliminar la receta de ${formatFecha(r.fecha)}${r.diagnostico ? ` (${r.diagnostico})` : ""}? No se puede deshacer.`,
+    { textoConfirmar: "Eliminar", peligro: true }
+  );
+  if (!confirmado) return;
+  (r.fotos || []).forEach((url) => marcarCloudinaryParaBorrar(url));
+  await borrarDoc("recetas", r.id);
+}
+
+function RecetaForm({ paciente, receta, onClose, onSaved }) {
+  const editando = !!(receta && receta.id);
+  const [fecha, setFecha] = React.useState(receta ? receta.fecha : hoyISO());
+  const [diagnostico, setDiagnostico] = React.useState(receta ? receta.diagnostico || "" : "");
+  const [notas, setNotas] = React.useState(receta ? receta.notas || "" : "");
+  const [medicamentos, setMedicamentos] = React.useState(receta && receta.medicamentos && receta.medicamentos.length ? receta.medicamentos : [medicamentoVacio()]);
+  // { id, url, esNueva }: esNueva marca una foto subida en ESTA sesión del
+  // formulario (todavía no guardada) — si se quita antes de guardar, o si
+  // se cancela el formulario sin guardar, se borra de Cloudinary de una
+  // vez porque nunca llegó a ser el valor vigente de la receta. Una foto
+  // que YA estaba guardada (esNueva=false) solo se borra si, al guardar de
+  // verdad, ya no aparece en la lista final — nunca antes, para no perder
+  // una foto que sigue siendo válida si se cancela sin guardar.
+  const [fotos, setFotos] = React.useState(
+    receta && receta.fotos ? receta.fotos.map((url) => ({ id: uid(), url, esNueva: false })) : []
+  );
+  const [subiendoFoto, setSubiendoFoto] = React.useState(false);
+  const [progresoFoto, setProgresoFoto] = React.useState(null); // { hecho, total } | null
   const [guardando, setGuardando] = React.useState(false);
   const [error, setError] = React.useState("");
+  const deshabilitadoFoto = subiendoFoto || !cloudinaryReady;
 
   function set(i, campo, valor) {
     setMedicamentos((ms) => ms.map((m, idx) => (idx === i ? { ...m, [campo]: valor } : m)));
   }
+
+  async function subirFotos(e) {
+    const archivos = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (archivos.length === 0) return;
+    setSubiendoFoto(true);
+    setError("");
+    setProgresoFoto({ hecho: 0, total: archivos.length });
+    const nuevas = [];
+    for (let i = 0; i < archivos.length; i++) {
+      try {
+        const url = await subirACloudinary(archivos[i], `${carpetaPaciente(paciente.id, paciente.nombre)}/recetas`);
+        nuevas.push({ id: uid(), url, esNueva: true });
+      } catch (err) {
+        setError(err.message);
+        break; // si una falla, no sigue intentando las demás
+      }
+      setProgresoFoto({ hecho: i + 1, total: archivos.length });
+    }
+    setFotos((f) => [...f, ...nuevas]);
+    setSubiendoFoto(false);
+    setProgresoFoto(null);
+  }
+
+  function quitarFoto(id) {
+    setFotos((f) => {
+      const foto = f.find((x) => x.id === id);
+      if (foto && foto.esNueva) marcarCloudinaryParaBorrar(foto.url);
+      return f.filter((x) => x.id !== id);
+    });
+  }
+
+  // Si se cierra el formulario sin guardar, las fotos NUEVAS que ya se
+  // subieron a Cloudinary en esta sesión quedan huérfanas — se encolan
+  // para borrar. Las que ya estaban guardadas desde antes no se tocan.
+  function cerrarForm() {
+    fotos.forEach((foto) => { if (foto.esNueva) marcarCloudinaryParaBorrar(foto.url); });
+    onClose();
+  }
+  usarNavegacionAtras(true, cerrarForm);
 
   async function guardar(e) {
     e.preventDefault();
@@ -2289,14 +2357,25 @@ function RecetaForm({ paciente, onClose, onSaved }) {
     setGuardando(true);
     setError("");
     try {
-      await crearDoc("recetas", {
+      const urlsFinales = fotos.map((f) => f.url);
+      const payload = {
         patientId: paciente.id,
         patientName: paciente.nombre,
         fecha,
         diagnostico,
         notas,
         medicamentos: validos,
-      });
+        fotos: urlsFinales,
+      };
+      if (editando) {
+        await actualizarDoc("recetas", receta.id, payload);
+        // Cualquier foto que ya estaba guardada y ya no está en la lista
+        // final recién ahora se borra de verdad — es el momento en que la
+        // edición queda confirmada.
+        (receta.fotos || []).filter((url) => !urlsFinales.includes(url)).forEach((url) => marcarCloudinaryParaBorrar(url));
+      } else {
+        await crearDoc("recetas", payload);
+      }
       onSaved();
     } catch (err) {
       setError(err.message);
@@ -2305,7 +2384,7 @@ function RecetaForm({ paciente, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`Nueva receta — ${paciente.nombre}`} onClose={onClose} wide>
+    <Modal title={`${editando ? "Editar receta" : "Nueva receta"} — ${paciente.nombre}`} onClose={cerrarForm} wide>
       <form onSubmit={guardar}>
         <div className="grid sm:grid-cols-2 gap-x-4">
           <Field label="Fecha"><TextInput type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
@@ -2336,12 +2415,37 @@ function RecetaForm({ paciente, onClose, onSaved }) {
         </div>
         <button type="button" onClick={() => setMedicamentos((ms) => [...ms, medicamentoVacio()])} className="text-sm text-accent2 hover:underline mt-2">+ Agregar otro medicamento</button>
 
+        <Field label="Fotos (opcional)">
+          {fotos.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {fotos.map((foto) => (
+                <div key={foto.id} className="relative w-20 h-20">
+                  <img src={foto.url} className="w-full h-full object-cover rounded-lg" />
+                  <button type="button" onClick={() => quitarFoto(foto.id)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-warn text-white text-xs">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 flex-wrap">
+            <label className={`flex items-center justify-center px-3 py-2.5 rounded-lg border border-dashed border-faint dark:border-white/20 text-sm text-accent2 cursor-pointer ${deshabilitadoFoto ? "opacity-50 pointer-events-none" : ""}`}>
+              + Elegir fotos
+              <input type="file" accept="image/*" multiple className="hidden" onChange={subirFotos} disabled={deshabilitadoFoto} />
+            </label>
+            <label className={`flex items-center justify-center px-3 py-2.5 rounded-lg border border-dashed border-faint dark:border-white/20 text-sm text-accent2 cursor-pointer ${deshabilitadoFoto ? "opacity-50 pointer-events-none" : ""}`}>
+              📷 Tomar foto
+              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={subirFotos} disabled={deshabilitadoFoto} />
+            </label>
+          </div>
+          {subiendoFoto && <p className="text-xs text-muted mt-1.5">Subiendo{progresoFoto ? ` ${progresoFoto.hecho}/${progresoFoto.total}` : "…"}</p>}
+          {!cloudinaryReady && <span className="text-xs text-faint block mt-1">(configura Cloudinary para poder adjuntar fotos)</span>}
+        </Field>
+
         <Field label="Notas adicionales"><TextArea rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
 
         {error && <p className="text-warn text-sm mb-3">{error}</p>}
         <div className="flex gap-2 justify-end mt-3">
-          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
-          <PrimaryButton type="submit" disabled={guardando}>{guardando ? "Guardando…" : "Guardar receta"}</PrimaryButton>
+          <SecondaryButton onClick={cerrarForm}>Cancelar</SecondaryButton>
+          <PrimaryButton type="submit" disabled={guardando || subiendoFoto}>{guardando ? "Guardando…" : editando ? "Guardar cambios" : "Guardar receta"}</PrimaryButton>
         </div>
       </form>
     </Modal>
@@ -2420,7 +2524,8 @@ function imprimirReceta(r, config) {
   win.print();
 }
 
-function TarjetaReceta({ r, config }) {
+function TarjetaReceta({ r, config, onEditar }) {
+  const [imagenAmpliada, setImagenAmpliada] = React.useState(null);
   return (
     <Card>
       <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -2428,9 +2533,11 @@ function TarjetaReceta({ r, config }) {
           <div className="text-xs text-muted">{formatFecha(r.fecha)}</div>
           {r.diagnostico && <div className="text-sm text-muted">{r.diagnostico}</div>}
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={() => compartirReceta(r, config)}>Compartir</SecondaryButton>
           <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={() => imprimirReceta(r, config)}>Imprimir</SecondaryButton>
+          <SecondaryButton className="!px-2.5 !py-1.5 !text-xs" onClick={() => onEditar(r)}>Editar</SecondaryButton>
+          <SecondaryButton className="!px-2.5 !py-1.5 !text-xs !text-warn" onClick={() => eliminarReceta(r)}>Eliminar</SecondaryButton>
         </div>
       </div>
       <ul className="mt-2 text-sm space-y-1">
@@ -2438,21 +2545,33 @@ function TarjetaReceta({ r, config }) {
           <li key={i}>• <strong>{m.nombre}</strong> — {m.dosis}, {m.via}, {m.frecuencia}, {m.duracion}</li>
         ))}
       </ul>
+      {r.fotos && r.fotos.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {r.fotos.map((url, i) => (
+            <img key={i} src={url} onClick={() => setImagenAmpliada(url)} className="w-16 h-16 object-cover rounded-lg cursor-pointer" />
+          ))}
+        </div>
+      )}
+      {imagenAmpliada && <ImagenLightbox src={imagenAmpliada} onClose={() => setImagenAmpliada(null)} />}
     </Card>
   );
 }
 
 function RecetasDePaciente({ paciente, recetas, config }) {
   const [mostrarForm, setMostrarForm] = React.useState(false);
+  const [recetaEditando, setRecetaEditando] = React.useState(null);
   return (
     <div>
       <div className="flex justify-end mb-3"><PrimaryButton onClick={() => setMostrarForm(true)}>+ Nueva receta</PrimaryButton></div>
       {recetas.length === 0 ? (
         <EmptyState icon="📋" title="Sin recetas registradas" />
       ) : (
-        <div className="space-y-3">{recetas.map((r) => <TarjetaReceta key={r.id} r={r} config={config} />)}</div>
+        <div className="space-y-3">{recetas.map((r) => <TarjetaReceta key={r.id} r={r} config={config} onEditar={setRecetaEditando} />)}</div>
       )}
       {mostrarForm && <RecetaForm paciente={paciente} onClose={() => setMostrarForm(false)} onSaved={() => setMostrarForm(false)} />}
+      {recetaEditando && (
+        <RecetaForm paciente={paciente} receta={recetaEditando} onClose={() => setRecetaEditando(null)} onSaved={() => setRecetaEditando(null)} />
+      )}
     </div>
   );
 }
@@ -2462,6 +2581,8 @@ function RecetasView({ config }) {
   const { items: recetas, loading } = useCollection("recetas", { orderByField: "fecha", direction: "desc" });
   const [pacienteSel, setPacienteSel] = React.useState("");
   const [mostrarForm, setMostrarForm] = React.useState(false);
+  const [recetaEditando, setRecetaEditando] = React.useState(null);
+  const pacienteDeRecetaEditando = recetaEditando ? pacientes.find((p) => p.id === recetaEditando.patientId) : null;
 
   return (
     <div>
@@ -2484,7 +2605,7 @@ function RecetasView({ config }) {
           {recetas.map((r) => (
             <div key={r.id}>
               <div className="text-sm font-medium mb-1">{r.patientName}</div>
-              <TarjetaReceta r={r} config={config} />
+              <TarjetaReceta r={r} config={config} onEditar={setRecetaEditando} />
             </div>
           ))}
         </div>
@@ -2494,6 +2615,14 @@ function RecetasView({ config }) {
           paciente={pacientes.find((p) => p.id === pacienteSel)}
           onClose={() => setMostrarForm(false)}
           onSaved={() => setMostrarForm(false)}
+        />
+      )}
+      {recetaEditando && pacienteDeRecetaEditando && (
+        <RecetaForm
+          paciente={pacienteDeRecetaEditando}
+          receta={recetaEditando}
+          onClose={() => setRecetaEditando(null)}
+          onSaved={() => setRecetaEditando(null)}
         />
       )}
     </div>
